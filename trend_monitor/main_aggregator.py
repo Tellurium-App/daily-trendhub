@@ -55,7 +55,11 @@ def aggregate_and_draft():
     gadgets = get_gadget_trends()
     
     all_items = games + gadgets
-    now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    # JSTタイムゾーンの定義（GitHub ActionsのUTC環境でもJSTで表示するため）
+    JST = datetime.timezone(datetime.timedelta(hours=9))
+    now_jst = datetime.datetime.now(JST)
+    now_str = now_jst.strftime("%Y-%m-%d %H:%M:%S")
+    today_str = now_jst.strftime("%Y年%m月%d日")
     
     # 1. CSVへの保存（Excelの文字化けを防ぐため utf-8-sig を使用）
     print(f"CSVファイル {csv_path} にデータを保存中...")
@@ -90,7 +94,7 @@ def aggregate_and_draft():
 
     # 2. ブログ下書き（Markdown）の自動生成
     print(f"ブログ下書き {draft_path} を作成中...")
-    today_str = datetime.date.today().strftime("%Y年%m月%d日")
+    # today_str は上部でJST基準で定義済み
     
     markdown_content = []
     markdown_content.append(f"# 【毎日更新】今日のトレンドゲーム＆ガジェット超速報！ - {today_str}\n")
@@ -253,7 +257,7 @@ def aggregate_and_draft():
     <header>
         <div class="container header-container">
             <div class="logo">TrendHub</div>
-            <div class="date-badge">{today_str} 更新</div>
+            <div class="date-badge">最終更新: {now_str} (JST)</div>
             <h1>今日のトレンドゲーム＆ガジェット超速報！</h1>
             <p class="subtitle">ネット of 海から、今大注目のセールゲームと最新テック・ガジェット of 情報を厳選してお届けしますっ！✨</p>
         </div>

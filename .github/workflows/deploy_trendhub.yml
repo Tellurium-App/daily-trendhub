@@ -1,0 +1,42 @@
+name: Deploy TrendHub Blog
+
+on:
+  schedule:
+    # 毎日午前0時（UTC）＝午前9時（日本時間）に自動実行
+    - cron: '0 0 * * *'
+  workflow_dispatch:
+    # 手動実行のサポート
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # リポジトリへの書き込み（commit & push）を許可
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Run Trend Monitor
+        env:
+          AMAZON_ASSOCIATE_ID: ${{ secrets.AMAZON_ASSOCIATE_ID }}
+        run: |
+          python trend_monitor/main_aggregator.py
+
+      - name: Commit and Push changes
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git add docs/ data/
+          # 差分がある場合のみコミットしてプッシュ
+          if ! git diff --cached --quiet; then
+            git commit -m "Auto-update trends: $(date +'%Y-%m-%d %H:%M:%S')"
+            git push origin HEAD:${{ github.ref }}
+          else
+            echo "No changes to commit."
+          fi

@@ -10,7 +10,7 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 from steam_monitor import get_steam_trends
 from gadget_monitor import get_gadget_trends
 
-AMAZON_ASSOCIATE_ID = os.environ.get("AMAZON_ASSOCIATE_ID", "trainer-test-22")
+AMAZON_ASSOCIATE_ID = "trainer-test-22"
 
 def clean_keyword_for_amazon(title: str) -> str:
     """
@@ -48,18 +48,13 @@ def aggregate_and_draft():
     draft_path = os.path.join(base_dir, "draft_report.md")
     html_path = os.path.join(docs_dir, "index.html")
     css_path = os.path.join(docs_dir, "style.css")
-    cname_path = os.path.join(docs_dir, "CNAME")
     
     print("データ収集中...")
     games = get_steam_trends()
     gadgets = get_gadget_trends()
     
     all_items = games + gadgets
-    # JSTタイムゾーンの定義（GitHub ActionsのUTC環境でもJSTで表示するため）
-    JST = datetime.timezone(datetime.timedelta(hours=9))
-    now_jst = datetime.datetime.now(JST)
-    now_str = now_jst.strftime("%Y-%m-%d %H:%M:%S")
-    today_str = now_jst.strftime("%Y年%m月%d日")
+    now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     
     # 1. CSVへの保存（Excelの文字化けを防ぐため utf-8-sig を使用）
     print(f"CSVファイル {csv_path} にデータを保存中...")
@@ -94,7 +89,7 @@ def aggregate_and_draft():
 
     # 2. ブログ下書き（Markdown）の自動生成
     print(f"ブログ下書き {draft_path} を作成中...")
-    # today_str は上部でJST基準で定義済み
+    today_str = datetime.date.today().strftime("%Y年%m月%d日")
     
     markdown_content = []
     markdown_content.append(f"# 【毎日更新】今日のトレンドゲーム＆ガジェット超速報！ - {today_str}\n")
@@ -257,7 +252,7 @@ def aggregate_and_draft():
     <header>
         <div class="container header-container">
             <div class="logo">TrendHub</div>
-            <div class="date-badge">最終更新: {now_str} (JST)</div>
+            <div class="date-badge">{today_str} 更新</div>
             <h1>今日のトレンドゲーム＆ガジェット超速報！</h1>
             <p class="subtitle">ネット of 海から、今大注目のセールゲームと最新テック・ガジェット of 情報を厳選してお届けしますっ！✨</p>
         </div>
@@ -673,11 +668,6 @@ footer {
         with open(css_path, mode='w', encoding='utf-8') as f:
             f.write(css_template)
         print("CSSビルド完了！")
-        
-        # CNAMEファイルの出力 (独自ドメイン設定用)
-        with open(cname_path, mode='w', encoding='utf-8') as f:
-            f.write("daily-trendhub.com")
-        print("CNAMEファイル出力完了！")
         
     except Exception as e:
         print(f"Webサイトビルド中にエラーが発生しました: {e}")

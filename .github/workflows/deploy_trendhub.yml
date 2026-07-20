@@ -3,7 +3,7 @@ name: Deploy TrendHub Blog
 on:
   schedule:
     # 毎日午前0時（UTC）＝午前9時（日本時間）に自動実行
-    - cron: '0 0 * * *'
+    - cron: '0 5 * * *'
   workflow_dispatch:
     # 手動実行のサポート
 

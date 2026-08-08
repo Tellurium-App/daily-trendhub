@@ -1140,7 +1140,7 @@ footer {
                 <h3 style="font-size: 1.4rem; font-weight: 700; margin-bottom: 15px; color: #ffffff; border-bottom: 1px solid var(--card-border); padding-bottom: 8px;">ご利用上の注意点</h3>
                 <p style="margin-bottom: 24px;">
                     当サイトに掲載されている価格、割引率、セール実施状況、および製品仕様などの情報は、データの取得時点（毎日 16:00 JST 頃）のものであり、常に最新の情報を保証するものではありません。<br>
-                    実際のセール実施の有無、販売価格、購入条件などにつきましてさ、必ずリンク先の各配信ストア（Steamストア）または公式販売元（Amazon等）にて直接ご確認ください。当サイトの情報を利用したことにより生じた、いかなるトラブルや不利益についても、当サイトの管理運営者は責任を負いかねます。
+                    実際のセール実施の有無、販売価格、購入条件などにつきましては、必ずリンク先の各配信ストア（Steamストア）または公式販売元（Amazon等）にて直接ご確認ください。当サイトの情報を利用したことにより生じた、いかなるトラブルや不利益についても、当サイトの管理運営者は責任を負いかねます。
                 </p>
 
                 <h3 style="font-size: 1.4rem; font-weight: 700; margin-bottom: 15px; color: #ffffff; border-bottom: 1px solid var(--card-border); padding-bottom: 8px;">お問い合わせ先</h3>

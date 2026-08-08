@@ -129,12 +129,12 @@ def build_history_badges(stats: dict) -> str:
     """履歴からしか分からない情報だけをバッジにします。"""
     badges = []
     if stats["listed_total"] <= 1:
-        badges.append('<span class="badge badge-new">🆕 初登場</span>')
+        badges.append('<span class="badge badge-new">NEW 初登場</span>')
     if stats["sale_run"] >= 2:
-        badges.append(f'<span class="badge badge-streak">🔥 セール{stats["sale_run"]}日目</span>')
+        badges.append(f'<span class="badge badge-streak">SALE {stats["sale_run"]}日目</span>')
     # 掲載日数がセール日数と同じなら数字が二重になるだけなので、長い時だけ出す
     if stats["listed_run"] >= STREAK_BADGE_MIN_DAYS and stats["listed_run"] > stats["sale_run"]:
-        badges.append(f'<span class="badge badge-regular">👑 {stats["listed_run"]}日連続</span>')
+        badges.append(f'<span class="badge badge-regular">RANK {stats["listed_run"]}日連続</span>')
     return "".join(badges)
 
 

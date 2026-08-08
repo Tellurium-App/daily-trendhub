@@ -1,8 +1,10 @@
 import os
+import collections
 import csv
 import datetime
 import glob
 import html
+import re
 import sys
 import urllib.parse
 
@@ -26,6 +28,13 @@ SITE_BASE_URL = os.environ.get(
 
 # 一覧に載せるアーカイブの最大件数
 ARCHIVE_LIST_LIMIT = 30
+
+# data/trend_report.csv の列。末尾2列は 2026-08-08 に追加（それ以前の行は空）。
+CSV_HEADER = ["ID", "タイプ", "見出し", "タイトル", "価格情報", "URL", "情報源", "取得日時",
+              "元価格", "割引率"]
+
+# 「〇日連続ランクイン」を出す下限。短すぎると全部に付いて意味がなくなる。
+STREAK_BADGE_MIN_DAYS = 3
 
 # 景表法（ステマ規制）が求める広告表示と、Amazonアソシエイト運営規約が求める表示。
 # 文言は改定されうるので、申請前にアソシエイト・セントラルで最新版を確認すること。
@@ -62,6 +71,118 @@ def build_amazon_url(title: str) -> str:
     if IS_AFFILIATE:
         url += f"&tag={AMAZON_ASSOCIATE_ID}"
     return url
+
+
+def parse_discount(row: dict) -> int:
+    """CSV1行の割引率を返します。新しい列を優先し、無ければ見出しから読み取ります。"""
+    raw = (row.get("割引率") or "").strip()
+    if raw.isdigit():
+        return int(raw)
+    m = re.search(r"(\d+)%OFF", row.get("見出し") or "")
+    return int(m.group(1)) if m else 0
+
+
+def load_game_history(csv_path: str) -> dict:
+    """CSVの全履歴から、ゲームID別の「掲載された日」と「セール中だった日」を集めます。
+
+    今日ぶんの行を書き込んだ後に呼ぶ前提。日付を集合で持つので、
+    1日に複数回実行しても二重に数えられない。
+    """
+    history = collections.defaultdict(lambda: {"days": set(), "sale_days": set()})
+    if not os.path.exists(csv_path):
+        return history
+
+    with open(csv_path, encoding="utf-8-sig", newline="") as f:
+        for row in csv.DictReader(f):
+            if not (row.get("タイプ") or "").startswith("game"):
+                continue
+            gid, day = row.get("ID"), (row.get("取得日時") or "")[:10]
+            if not gid or not day:
+                continue
+            history[gid]["days"].add(day)
+            if parse_discount(row) > 0:
+                history[gid]["sale_days"].add(day)
+    return history
+
+
+def consecutive_days(days: set, today: datetime.date) -> int:
+    """today から1日ずつ遡って、何日連続で days に含まれるかを数えます。"""
+    count, d = 0, today
+    while d.isoformat() in days:
+        count += 1
+        d -= datetime.timedelta(days=1)
+    return count
+
+
+def item_stats(item: dict, history: dict, today: datetime.date) -> dict:
+    """1件ぶんの履歴指標をまとめます。Steamのストアページには出ていない情報。"""
+    stat = history.get(str(item.get("id")), {"days": set(), "sale_days": set()})
+    return {
+        "listed_total": len(stat["days"]),
+        "listed_run": consecutive_days(stat["days"], today),
+        "sale_run": consecutive_days(stat["sale_days"], today),
+        "discount": item.get("discount_percent", 0) or 0,
+    }
+
+
+def build_history_badges(stats: dict) -> str:
+    """履歴からしか分からない情報だけをバッジにします。"""
+    badges = []
+    if stats["listed_total"] <= 1:
+        badges.append('<span class="badge badge-new">🆕 初登場</span>')
+    if stats["sale_run"] >= 2:
+        badges.append(f'<span class="badge badge-streak">🔥 セール{stats["sale_run"]}日目</span>')
+    # 掲載日数がセール日数と同じなら数字が二重になるだけなので、長い時だけ出す
+    if stats["listed_run"] >= STREAK_BADGE_MIN_DAYS and stats["listed_run"] > stats["sale_run"]:
+        badges.append(f'<span class="badge badge-regular">👑 {stats["listed_run"]}日連続</span>')
+    return "".join(badges)
+
+
+def pick_of_the_day(games: list, history: dict, today: datetime.date):
+    """今日の一本と、その理由を返します。理由は必ず履歴データの裏付けがあるものだけ。"""
+    if not games:
+        return None, ""
+
+    scored = [(g, item_stats(g, history, today)) for g in games]
+
+    for g, s in scored:
+        if s["listed_total"] <= 1 and s["discount"] > 0:
+            return g, f"今日はじめて上位に入って、いきなり{s['discount']}%OFF。"
+
+    g, s = max(scored, key=lambda x: x[1]["sale_run"])
+    if s["sale_run"] >= 5:
+        return g, f"セールが今日で{s['sale_run']}日目。そろそろ終わるかもしれない。"
+
+    g, s = max(scored, key=lambda x: x[1]["listed_run"])
+    if s["listed_run"] >= STREAK_BADGE_MIN_DAYS:
+        return g, f"{s['listed_run']}日連続で上位に居座ってる定番。"
+
+    g, s = max(scored, key=lambda x: x[1]["discount"])
+    if s["discount"] > 0:
+        return g, f"今日並んだ中では最大の{s['discount']}%OFF。"
+
+    return scored[0][0], "今日の売上上位から。"
+
+
+def build_pick_section(pick: dict, reason: str) -> str:
+    """「今日の一本」セクションを組み立てます。"""
+    if not pick:
+        return ""
+
+    price = pick.get("final_price", 0) or 0
+    return f"""
+        <section class="pick-section">
+            <div class="section-title">
+                <h2><span>⭐</span> 今日の一本</h2>
+            </div>
+            <div class="pick-card">
+                <h3>{html.escape(pick['title'])}</h3>
+                <p class="pick-reason">{html.escape(reason)}</p>
+                <div class="pick-price">{price:.0f}円</div>
+                <a href="{html.escape(pick['url'], quote=True)}" target="_blank" class="btn btn-primary">👉 Steamで見る</a>
+            </div>
+        </section>
+"""
 
 
 def archive_rel_path(d: datetime.date) -> str:
@@ -109,7 +230,7 @@ def build_archive_section(dates: list, depth: int, current: datetime.date = None
 
 def build_page(title: str, description: str, canonical_url: str, heading: str,
                date_label: str, game_cards_html: str, gadget_cards_html: str,
-               archive_html: str, depth: int) -> str:
+               archive_html: str, depth: int, pick_html: str = "") -> str:
     """1ページ分のHTMLを組み立てます。depth はサイトルートからの階層の深さ。"""
     prefix = "../" * depth
     esc_title = html.escape(title)
@@ -158,6 +279,7 @@ def build_page(title: str, description: str, canonical_url: str, heading: str,
     </header>
 {notice_html}
     <main class="container">
+{pick_html}
         <section class="game-section">
             <div class="section-title">
                 <h2><span>🎮</span> ゲームトレンド (Steam)</h2>
@@ -256,15 +378,19 @@ def aggregate_and_draft():
         with open(csv_path, mode='a', encoding='utf-8-sig', newline='') as f:
             writer = csv.writer(f)
             if not file_exists:
-                writer.writerow(["ID", "タイプ", "見出し", "タイトル", "価格情報", "URL", "情報源", "取得日時"])
-            
+                writer.writerow(CSV_HEADER)
+
             for item in all_items:
                 price = item.get("final_price")
                 if price is not None:
                     price_str = f"{price:.0f}円"
                 else:
                     price_str = item.get("price_info", "価格情報なし")
-                    
+
+                # 元価格と割引率は見出しの文字列からではなく、取得元の数値をそのまま残す
+                orig = item.get("original_price")
+                orig_str = f"{orig:.0f}" if orig else ""
+
                 writer.writerow([
                     item.get("id"),
                     item.get("type"),
@@ -273,7 +399,9 @@ def aggregate_and_draft():
                     price_str,
                     item.get("url"),
                     item.get("source", "Steam Store"),
-                    now_str
+                    now_str,
+                    orig_str,
+                    item.get("discount_percent", 0),
                 ])
         print("CSV保存完了！")
     except Exception as e:
@@ -343,7 +471,12 @@ def aggregate_and_draft():
 
     # 3. プレミアム静的ウェブサイト (HTML) の自動ビルド
     print(f"Webサイト {html_path} をビルド中...")
-    
+
+    # 過去の掲載履歴を読み込む（今日ぶんは上でCSVに書き込み済み）
+    today_date = datetime.date.today()
+    history = load_game_history(csv_path)
+    print(f"掲載履歴を読み込み: {len(history)} タイトル")
+
     # ゲームのカードHTML構築
     game_cards_html = []
     if games:
@@ -351,7 +484,10 @@ def aggregate_and_draft():
             price_val = item.get("final_price", 0)
             orig_val = item.get("original_price", 0)
             discount = item.get("discount_percent", 0)
-            
+
+            stats = item_stats(item, history, today_date)
+            history_badges = build_history_badges(stats)
+
             badge_class = "badge-sale" if discount > 0 else "badge-topseller"
             badge_text = f"{discount}% OFF" if discount > 0 else "TOP SELLER"
             
@@ -374,14 +510,15 @@ def aggregate_and_draft():
                         <span class="badge {badge_class}">{badge_text}</span>
                         <span class="source">Steam Store</span>
                     </div>
-                    <h3>{item['title']}</h3>
+                    <h3>{html.escape(item['title'])}</h3>
+                    <div class="history-badges">{history_badges}</div>
                 </div>
                 <div>
                     <div class="price-box">
                         {price_html}
                     </div>
                     <div class="btn-container">
-                        <a href="{item['url']}" target="_blank" class="btn btn-primary">👉 Steamでチェックする</a>
+                        <a href="{html.escape(item['url'], quote=True)}" target="_blank" class="btn btn-primary">👉 Steamでチェックする</a>
                     </div>
                 </div>
             </div>
@@ -437,6 +574,11 @@ def aggregate_and_draft():
     # 既存のアーカイブ＋今日ぶんを新しい順に並べる
     archive_dates = sorted(set(collect_archive_dates(docs_dir)) | {today}, reverse=True)
 
+    pick, pick_reason = pick_of_the_day(games[:6], history, today)
+    pick_html = build_pick_section(pick, pick_reason)
+    if pick:
+        print(f"今日の一本: {pick['title']} / {pick_reason}")
+
     top_html = build_page(
         title=f"【毎日更新】今日のトレンドゲーム＆ガジェット速報 - {today_str}",
         description=page_description,
@@ -447,6 +589,7 @@ def aggregate_and_draft():
         gadget_cards_html=gadgets_joined,
         archive_html=build_archive_section(archive_dates, depth=0, current=today),
         depth=0,
+        pick_html=pick_html,
     )
 
     archive_page_html = build_page(
@@ -459,6 +602,7 @@ def aggregate_and_draft():
         gadget_cards_html=gadgets_joined,
         archive_html=build_archive_section(archive_dates, depth=3, current=today),
         depth=3,
+        pick_html=pick_html,
     )
 
     archive_path = os.path.join(docs_dir, *archive_rel_path(today).strip("/").split("/"), "index.html")
@@ -804,6 +948,75 @@ section {
     grid-column: 1 / -1;
     text-align: center;
     padding: 40px 0;
+}
+
+.history-badges {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-bottom: 16px;
+}
+
+.history-badges:empty {
+    display: none;
+}
+
+.badge-new {
+    background: rgba(34, 197, 94, 0.15);
+    color: #4ade80;
+    border: 1px solid rgba(34, 197, 94, 0.25);
+}
+
+.badge-streak {
+    background: rgba(249, 115, 22, 0.15);
+    color: #fb923c;
+    border: 1px solid rgba(249, 115, 22, 0.25);
+}
+
+.badge-regular {
+    background: rgba(234, 179, 8, 0.15);
+    color: #facc15;
+    border: 1px solid rgba(234, 179, 8, 0.25);
+}
+
+.pick-section {
+    margin-bottom: 60px;
+}
+
+.pick-card {
+    background: var(--card-bg);
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    border-left: 3px solid var(--accent-pink);
+    border-radius: 16px;
+    padding: 28px 32px;
+    backdrop-filter: blur(12px);
+}
+
+.pick-card h3 {
+    font-family: var(--font-display);
+    font-size: 1.5rem;
+    font-weight: 700;
+    color: #ffffff;
+    margin-bottom: 10px;
+}
+
+.pick-reason {
+    color: var(--text-primary);
+    font-size: 1rem;
+    margin-bottom: 16px;
+}
+
+.pick-price {
+    font-size: 1.4rem;
+    font-weight: 800;
+    color: #ffffff;
+    margin-bottom: 20px;
+}
+
+.pick-card .btn {
+    width: auto;
+    display: inline-flex;
+    padding: 10px 28px;
 }
 
 .affiliate-notice {

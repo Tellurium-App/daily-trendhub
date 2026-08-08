@@ -12,7 +12,11 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 from steam_monitor import get_steam_trends
 from gadget_monitor import get_gadget_trends
 
-AMAZON_ASSOCIATE_ID = os.environ.get("AMAZON_ASSOCIATE_ID", "trainer-test-22")
+# アソシエイトIDが未設定のうちは tag を付けず、ただのAmazon検索リンクとして出す。
+# 広告にならないので、この間はステマ規制の表記義務も発生しない。
+# GitHub の Secrets に本物のIDを入れた時点で、リンクと表記が同時にアフィリエイト用へ切り替わる。
+AMAZON_ASSOCIATE_ID = os.environ.get("AMAZON_ASSOCIATE_ID", "").strip()
+IS_AFFILIATE = bool(AMAZON_ASSOCIATE_ID)
 
 # 独自ドメインを取得したら SITE_BASE_URL を差し替えるだけで
 # canonical / OGP / sitemap の URL が一斉に切り替わる。
@@ -22,6 +26,11 @@ SITE_BASE_URL = os.environ.get(
 
 # 一覧に載せるアーカイブの最大件数
 ARCHIVE_LIST_LIMIT = 30
+
+# 景表法（ステマ規制）が求める広告表示と、Amazonアソシエイト運営規約が求める表示。
+# 文言は改定されうるので、申請前にアソシエイト・セントラルで最新版を確認すること。
+AFFILIATE_NOTICE = "本ページはプロモーションを含みます。商品リンクの一部はアフィリエイトリンクです。"
+AFFILIATE_DISCLOSURE = "Amazonのアソシエイトとして、TrendHubは適格販売により収入を得ています。"
 
 def clean_keyword_for_amazon(title: str) -> str:
     """
@@ -45,6 +54,15 @@ def clean_keyword_for_amazon(title: str) -> str:
         clean_title = clean_title[:25]
         
     return clean_title.strip()
+
+def build_amazon_url(title: str) -> str:
+    """Amazon検索URLを組み立てます。アソシエイトIDがある時だけ tag を付けます。"""
+    encoded_kw = urllib.parse.quote(clean_keyword_for_amazon(title))
+    url = f"https://www.amazon.co.jp/s?k={encoded_kw}"
+    if IS_AFFILIATE:
+        url += f"&tag={AMAZON_ASSOCIATE_ID}"
+    return url
+
 
 def archive_rel_path(d: datetime.date) -> str:
     """日付からサイトルート起点のアーカイブパス（末尾スラッシュ付き）を組み立てます。"""
@@ -97,6 +115,16 @@ def build_page(title: str, description: str, canonical_url: str, heading: str,
     esc_title = html.escape(title)
     esc_desc = html.escape(description)
 
+    # アフィリエイトIDが設定されている時だけ、広告表示とアソシエイト表示を出す
+    notice_html = (
+        f'\n    <div class="affiliate-notice"><div class="container">{html.escape(AFFILIATE_NOTICE)}</div></div>'
+        if IS_AFFILIATE else ""
+    )
+    disclosure_html = (
+        f'\n            <p class="disclosure">{html.escape(AFFILIATE_DISCLOSURE)}</p>'
+        if IS_AFFILIATE else ""
+    )
+
     return f"""<!DOCTYPE html>
 <html lang="ja">
 <head>
@@ -128,7 +156,7 @@ def build_page(title: str, description: str, canonical_url: str, heading: str,
             <p class="subtitle">ネットの海から、今大注目のセールゲームと最新テック・ガジェットの情報を厳選してお届けしますっ！✨</p>
         </div>
     </header>
-
+{notice_html}
     <main class="container">
         <section class="game-section">
             <div class="section-title">
@@ -154,7 +182,7 @@ def build_page(title: str, description: str, canonical_url: str, heading: str,
 
     <footer>
         <div class="container footer-container">
-            <p>流行りの移り変わりはとても早いので、お得なアイテムは早めにチェックしてくださいね！🌻</p>
+            <p>流行りの移り変わりはとても早いので、お得なアイテムは早めにチェックしてくださいね！🌻</p>{disclosure_html}
             <p class="credit">© 2026 TrendHub. Crafted with love by Seren &amp; Trainer.</p>
         </div>
     </footer>
@@ -285,16 +313,15 @@ def aggregate_and_draft():
     markdown_content.append("## 🔌 最新のテック＆ガジェットトレンド\n")
     if gadgets:
         for idx, g in enumerate(gadgets[:5], 1):
-            search_kw = clean_keyword_for_amazon(g['title'])
-            encoded_kw = urllib.parse.quote(search_kw)
-            amazon_affiliate_url = f"https://www.amazon.co.jp/s?k={encoded_kw}&tag={AMAZON_ASSOCIATE_ID}"
+            amazon_url = build_amazon_url(g['title'])
+            amazon_label = "Amazonで最安値をチェックする（アフィリエイト）" if IS_AFFILIATE else "Amazonで最安値をチェックする"
             
             markdown_content.append(f"### {idx}. {g['title']}")
             markdown_content.append(
                 f"> **{g['headline']}** ({g['source']})  \n"
                 f"> **価格目安**：{g['price_info']}  \n"
                 f"> **概要**：{g['description']}  \n"
-                f"> [👉 Amazonで最安値をチェックする（アフィリエイト）]({amazon_affiliate_url})  \n"
+                f"> [👉 {amazon_label}]({amazon_url})  \n"
                 f"> [👉 元記事・詳細はこちら]({g['url']})\n"
             )
     else:
@@ -367,9 +394,8 @@ def aggregate_and_draft():
     gadget_cards_html = []
     if gadgets:
         for item in gadgets[:6]:  # 最大6件
-            search_kw = clean_keyword_for_amazon(item['title'])
-            encoded_kw = urllib.parse.quote(search_kw)
-            amazon_affiliate_url = f"https://www.amazon.co.jp/s?k={encoded_kw}&tag={AMAZON_ASSOCIATE_ID}"
+            amazon_url = html.escape(build_amazon_url(item['title']), quote=True)
+            amazon_btn_label = "🛒 Amazon最安値を検索[PR]" if IS_AFFILIATE else "🛒 Amazon最安値を検索"
             
             badge_type = item.get('type', 'gadget_new').replace('gadget_', '').upper()
             
@@ -388,7 +414,7 @@ def aggregate_and_draft():
                         <div class="price-normal" style="font-size: 1.2rem; color: var(--accent-cyan); font-weight:600;">{item['price_info']}</div>
                     </div>
                     <div class="btn-container">
-                        <a href="{amazon_affiliate_url}" target="_blank" class="btn btn-primary" style="background: var(--accent-cyan); color: #000;">🛒 Amazon最安値を検索</a>
+                        <a href="{amazon_url}" target="_blank" class="btn btn-primary" style="background: var(--accent-cyan); color: #000;">{amazon_btn_label}</a>
                         <a href="{item['url']}" target="_blank" class="btn btn-secondary">👉 元記事を読む</a>
                     </div>
                 </div>
@@ -778,6 +804,20 @@ section {
     grid-column: 1 / -1;
     text-align: center;
     padding: 40px 0;
+}
+
+.affiliate-notice {
+    background: rgba(255, 255, 255, 0.04);
+    border-bottom: 1px solid var(--card-border);
+    padding: 12px 0;
+    font-size: 0.85rem;
+    color: var(--text-secondary);
+    text-align: center;
+}
+
+.disclosure {
+    font-size: 0.85rem;
+    color: var(--text-secondary) !important;
 }
 
 .archive-list {

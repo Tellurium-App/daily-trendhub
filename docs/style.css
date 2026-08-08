@@ -340,6 +340,20 @@ section {
     padding: 40px 0;
 }
 
+.affiliate-notice {
+    background: rgba(255, 255, 255, 0.04);
+    border-bottom: 1px solid var(--card-border);
+    padding: 12px 0;
+    font-size: 0.85rem;
+    color: var(--text-secondary);
+    text-align: center;
+}
+
+.disclosure {
+    font-size: 0.85rem;
+    color: var(--text-secondary) !important;
+}
+
 .archive-list {
     list-style: none;
     display: grid;

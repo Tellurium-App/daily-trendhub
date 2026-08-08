@@ -147,21 +147,21 @@ def pick_of_the_day(games: list, history: dict, today: datetime.date):
 
     for g, s in scored:
         if s["listed_total"] <= 1 and s["discount"] > 0:
-            return g, f"今日はじめて上位に入って、いきなり{s['discount']}%OFF。"
+            return g, f"本日初めて上位に登場。現在 {s['discount']}%OFF のセール対象となっています。"
 
     g, s = max(scored, key=lambda x: x[1]["sale_run"])
     if s["sale_run"] >= 5:
-        return g, f"セールが今日で{s['sale_run']}日目。そろそろ終わるかもしれない。"
+        return g, f"現在 {s['sale_run']} 日連続でセールを継続中です。価格は予告なく変更される場合があります。"
 
     g, s = max(scored, key=lambda x: x[1]["listed_run"])
     if s["listed_run"] >= STREAK_BADGE_MIN_DAYS:
-        return g, f"{s['listed_run']}日連続で上位に居座ってる定番。"
+        return g, f"直近 {s['listed_run']} 日連続で売上上位にランクインしている定番のタイトルです。"
 
     g, s = max(scored, key=lambda x: x[1]["discount"])
     if s["discount"] > 0:
-        return g, f"今日並んだ中では最大の{s['discount']}%OFF。"
+        return g, f"本日掲載されたセール対象タイトルの中で、最大の割引率（{s['discount']}%OFF）を記録しています。"
 
-    return scored[0][0], "今日の売上上位から。"
+    return scored[0][0], "本日の売上上位ランキングよりピックアップしています。"
 
 
 def build_pick_section(pick: dict, reason: str) -> str:
@@ -173,13 +173,13 @@ def build_pick_section(pick: dict, reason: str) -> str:
     return f"""
         <section class="pick-section">
             <div class="section-title">
-                <h2><span>⭐</span> 今日の一本</h2>
+                <h2><span>📌</span> 本日のピックアップ</h2>
             </div>
             <div class="pick-card">
                 <h3>{html.escape(pick['title'])}</h3>
                 <p class="pick-reason">{html.escape(reason)}</p>
                 <div class="pick-price">{price:.0f}円</div>
-                <a href="{html.escape(pick['url'], quote=True)}" target="_blank" class="btn btn-primary">👉 Steamで見る</a>
+                <a href="{html.escape(pick['url'], quote=True)}" target="_blank" class="btn btn-primary">Steamで詳細を見る</a>
             </div>
         </section>
 """
@@ -230,7 +230,8 @@ def build_archive_section(dates: list, depth: int, current: datetime.date = None
 
 def build_page(title: str, description: str, canonical_url: str, heading: str,
                date_label: str, game_cards_html: str, gadget_cards_html: str,
-               archive_html: str, depth: int, pick_html: str = "") -> str:
+               archive_html: str, depth: int, pick_html: str = "",
+               about_html: str = "") -> str:
     """1ページ分のHTMLを組み立てます。depth はサイトルートからの階層の深さ。"""
     prefix = "../" * depth
     esc_title = html.escape(title)
@@ -245,6 +246,31 @@ def build_page(title: str, description: str, canonical_url: str, heading: str,
         f'\n            <p class="disclosure">{html.escape(AFFILIATE_DISCLOSURE)}</p>'
         if IS_AFFILIATE else ""
     )
+
+    if about_html:
+        main_content = about_html
+    else:
+        main_content = f"""{pick_html}
+        <section class="game-section">
+            <div class="section-title">
+                <h2><span>🎮</span> Steamゲームトレンド</h2>
+                <p>Steamで現在セール中、または売上上位にランクインしている人気タイトルです。</p>
+            </div>
+            <div class="grid">
+                {game_cards_html}
+            </div>
+        </section>
+
+        <section class="gadget-section">
+            <div class="section-title">
+                <h2><span>🔌</span> 最新ガジェットトレンド</h2>
+                <p>ガジェット系メディアの新着テック・製品関連ニュースです。</p>
+            </div>
+            <div class="grid">
+                {gadget_cards_html}
+            </div>
+        </section>
+{archive_html}"""
 
     return f"""<!DOCTYPE html>
 <html lang="ja">
@@ -274,37 +300,18 @@ def build_page(title: str, description: str, canonical_url: str, heading: str,
             <div class="logo"><a href="{prefix}">TrendHub</a></div>
             <div class="date-badge">{date_label}</div>
             <h1>{html.escape(heading)}</h1>
-            <p class="subtitle">ネットの海から、今大注目のセールゲームと最新テック・ガジェットの情報を厳選してお届けしますっ！✨</p>
+            <p class="subtitle">Steamのセール・売上上位ゲームと、ガジェット系メディアの新着ニュースを毎日自動集計してお届けする情報サイトです。</p>
         </div>
     </header>
 {notice_html}
     <main class="container">
-{pick_html}
-        <section class="game-section">
-            <div class="section-title">
-                <h2><span>🎮</span> ゲームトレンド (Steam)</h2>
-                <p>セール中や売上上位の人気タイトルを厳選！</p>
-            </div>
-            <div class="grid">
-                {game_cards_html}
-            </div>
-        </section>
-
-        <section class="gadget-section">
-            <div class="section-title">
-                <h2><span>🔌</span> ガジェットトレンド (Gizmodo)</h2>
-                <p>今話題の最新ガジェットやお得なセール情報！</p>
-            </div>
-            <div class="grid">
-                {gadget_cards_html}
-            </div>
-        </section>
-{archive_html}
+{main_content}
     </main>
 
     <footer>
         <div class="container footer-container">
-            <p>流行りの移り変わりはとても早いので、お得なアイテムは早めにチェックしてくださいね！🌻</p>{disclosure_html}
+            <p class="about-link" style="margin-bottom: 16px;"><a href="{prefix}about/" style="color: var(--accent-cyan); text-decoration: none; font-weight: 600;">当サイトについて（運営者情報）</a></p>
+            <p>当サイトの情報は自動集計による取得時点のものであり、最新の価格や在庫状況は各ストアにてご確認ください。</p>{disclosure_html}
             <p class="credit">© 2026 TrendHub. Crafted with love by Seren &amp; Trainer.</p>
         </div>
     </footer>
@@ -313,9 +320,12 @@ def build_page(title: str, description: str, canonical_url: str, heading: str,
 
 
 def write_sitemap(docs_dir: str, dates: list) -> None:
-    """トップと全アーカイブを載せた sitemap.xml を出力します。"""
+    """トップ、Aboutページ、全アーカイブを載せた sitemap.xml を出力します。"""
     today = datetime.date.today()
-    entries = [(f"{SITE_BASE_URL}/", today)]
+    entries = [
+        (f"{SITE_BASE_URL}/", today),
+        (f"{SITE_BASE_URL}/about/", today)
+    ]
     entries += [(f"{SITE_BASE_URL}/{archive_rel_path(d)}", d) for d in dates]
 
     body = "\n".join(
@@ -412,13 +422,13 @@ def aggregate_and_draft():
     today_str = datetime.date.today().strftime("%Y年%m月%d日")
     
     markdown_content = []
-    markdown_content.append(f"# 【毎日更新】今日のトレンドゲーム＆ガジェット超速報！ - {today_str}\n")
-    markdown_content.append("こんにちは！今日のネットの海から、今大注目のセールゲームと最新テック・ガジェットの情報を厳選してお届けしますっ！✨\n")
-    markdown_content.append("「何か面白いゲームないかな？」「今話題のガジェットが知りたい！」という方は、ぜひ参考にしてみてくださいね。🌻\n")
+    markdown_content.append(f"# 【毎日更新】今日のトレンドゲーム＆ガジェット速報 - {today_str}\n")
+    markdown_content.append("当サイトは、Steamで現在セール中・売上上位のゲーム情報と、ガジェット系メディアの新着ニュースを毎日自動集計してお届けする速報レポートです。\n")
+    markdown_content.append("日々の製品チェックや最新トレンドの把握にご活用ください。\n")
     
     # ゲームセクション
     markdown_content.append("---")
-    markdown_content.append("## 🎮 注目のトレンドゲーム情報（Steamセール＆売上上位）\n")
+    markdown_content.append("## 🎮 ゲームトレンド情報（Steamセール＆売上上位）\n")
     if games:
         for idx, g in enumerate(games[:5], 1):
             price_val = g.get("final_price", 0)
@@ -432,9 +442,9 @@ def aggregate_and_draft():
                 price_line = f"**価格：{price_val:.0f}円**"
                 
             markdown_content.append(f"### {idx}. {g['title']}")
-            markdown_content.append(f"> **{g['headline']}**  \n> {price_line}  \n> [👉 Steamストアでチェックする]({g['url']})\n")
+            markdown_content.append(f"> **{g['headline']}**  \n> {price_line}  \n> [Steamで詳細を見る]({g['url']})\n")
     else:
-        markdown_content.append("※現在、注目のゲーム情報はありません。\n")
+        markdown_content.append("※現在、対象のゲーム情報はありません。\n")
         
     # ガジェットセクション
     markdown_content.append("---")
@@ -449,18 +459,18 @@ def aggregate_and_draft():
                 f"> **{g['headline']}** ({g['source']})  \n"
                 f"> **価格目安**：{g['price_info']}  \n"
                 f"> **概要**：{g['description']}  \n"
-                f"> [👉 {amazon_label}]({amazon_url})  \n"
-                f"> [👉 元記事・詳細はこちら]({g['url']})\n"
+                f"> [{amazon_label}]({amazon_url})  \n"
+                f"> [元記事・詳細はこちら]({g['url']})\n"
             )
     else:
-        markdown_content.append("※現在、注目のガジェット情報はありません。\n")
+        markdown_content.append("※現在、対象のガジェット情報はありません。\n")
         
     # 結びの言葉
     markdown_content.append("---")
-    markdown_content.append("## 📝 今日のまとめ\n")
-    markdown_content.append("気になるアイテムは見つかりましたか？\n")
-    markdown_content.append("流行りの移り変わりはとても早いので、お得なセール品などは売り切れたり終了したりする前に早めのチェックがおすすめです！\n")
-    markdown_content.append("それでは、明日もぽかぽかなトレンド情報をお届けしますので、お楽しみにっ！今日も良い一日になりますように！🌻\n")
+    markdown_content.append("## 📝 本日のまとめ\n")
+    markdown_content.append("紹介したセール情報や価格目安は、当サイトの集計時点（{now_str}）のものです。\n")
+    markdown_content.append("価格やセール実施状況は各ストアにて予告なく変更される場合がありますので、必ずリンク先の公式ストアで最新情報をご確認ください。\n")
+    markdown_content.append("それでは、明日も最新のトレンド情報をお届けします。\n")
     
     try:
         with open(draft_path, mode='w', encoding='utf-8') as f:
@@ -518,21 +528,21 @@ def aggregate_and_draft():
                         {price_html}
                     </div>
                     <div class="btn-container">
-                        <a href="{html.escape(item['url'], quote=True)}" target="_blank" class="btn btn-primary">👉 Steamでチェックする</a>
+                        <a href="{html.escape(item['url'], quote=True)}" target="_blank" class="btn btn-primary">Steamで詳細を見る</a>
                     </div>
                 </div>
             </div>
             """
             game_cards_html.append(card_html)
     else:
-        game_cards_html.append("<p class='no-data'>現在、注目のゲーム情報はありません。</p>")
+        game_cards_html.append("<p class='no-data'>現在、対象のゲーム情報はありません。</p>")
 
     # ガジェットのカードHTML構築
     gadget_cards_html = []
     if gadgets:
         for item in gadgets[:6]:  # 最大6件
             amazon_url = html.escape(build_amazon_url(item['title']), quote=True)
-            amazon_btn_label = "🛒 Amazon最安値を検索[PR]" if IS_AFFILIATE else "🛒 Amazon最安値を検索"
+            amazon_btn_label = "Amazonで最安値を検索[PR]" if IS_AFFILIATE else "Amazonで最安値を検索"
             
             badge_type = item.get('type', 'gadget_new').replace('gadget_', '').upper()
             
@@ -552,14 +562,14 @@ def aggregate_and_draft():
                     </div>
                     <div class="btn-container">
                         <a href="{amazon_url}" target="_blank" class="btn btn-primary" style="background: var(--accent-cyan); color: #000;">{amazon_btn_label}</a>
-                        <a href="{item['url']}" target="_blank" class="btn btn-secondary">👉 元記事を読む</a>
+                        <a href="{item['url']}" target="_blank" class="btn btn-secondary">元記事を読む</a>
                     </div>
                 </div>
             </div>
             """
             gadget_cards_html.append(card_html)
     else:
-        gadget_cards_html.append("<p class='no-data'>現在、注目のガジェット情報はありません。</p>")
+        gadget_cards_html.append("<p class='no-data'>現在、対象のガジェット情報はありません。</p>")
 
     # ページの組み立て（トップと日別アーカイブで本文を共有する）
     games_joined = "".join(game_cards_html)
@@ -567,8 +577,8 @@ def aggregate_and_draft():
 
     today = datetime.date.today()
     page_description = (
-        f"{today_str}のSteamセール・売上上位ゲーム{len(games[:6])}件と、"
-        f"最新テック・ガジェット{len(gadgets[:6])}件をまとめて紹介。毎日自動更新のトレンドまとめ。"
+        f"{today_str}時点のSteamセール・売上上位ゲームと、"
+        f"ガジェット・製品情報の新着ニュースを毎日自動集計。過去アーカイブも掲載中。"
     )
 
     # 既存のアーカイブ＋今日ぶんを新しい順に並べる
@@ -580,10 +590,10 @@ def aggregate_and_draft():
         print(f"今日の一本: {pick['title']} / {pick_reason}")
 
     top_html = build_page(
-        title=f"【毎日更新】今日のトレンドゲーム＆ガジェット速報 - {today_str}",
+        title=f"TrendHub - ゲーム＆ガジェットトレンド自動集計速報 ({today_str})",
         description=page_description,
         canonical_url=f"{SITE_BASE_URL}/",
-        heading="今日のトレンドゲーム＆ガジェット超速報！",
+        heading="TrendHub - ゲーム＆ガジェットトレンド速報",
         date_label=f"{today_str} 更新",
         game_cards_html=games_joined,
         gadget_cards_html=gadgets_joined,
@@ -593,10 +603,10 @@ def aggregate_and_draft():
     )
 
     archive_page_html = build_page(
-        title=f"{today_str}のトレンドゲーム＆ガジェット速報",
+        title=f"TrendHub - ゲーム＆ガジェットトレンド速報 ({today_str} 時点の記録)",
         description=page_description,
         canonical_url=f"{SITE_BASE_URL}/{archive_rel_path(today)}",
-        heading=f"{today_str}のトレンドゲーム＆ガジェット",
+        heading=f"TrendHub - {today_str} 時点のトレンド記録",
         date_label=f"{today_str} 時点の記録",
         game_cards_html=games_joined,
         gadget_cards_html=gadgets_joined,
@@ -1102,6 +1112,64 @@ footer {
             f.write(archive_page_html)
         print(f"アーカイブ出力完了！ -> {archive_path}")
 
+        # docs/about/index.html の出力
+        about_dir = os.path.join(docs_dir, "about")
+        os.makedirs(about_dir, exist_ok=True)
+        about_path = os.path.join(about_dir, "index.html")
+
+        about_content_html = """
+        <section class="about-section" style="max-width: 800px; margin: 0 auto 80px; padding: 0 20px;">
+            <div class="section-title">
+                <h2 style="font-family: var(--font-display); font-size: 2rem; font-weight: 700; margin-bottom: 20px; color: #ffffff;">当サイトについて（運営者情報）</h2>
+            </div>
+            <div class="about-card" style="background: var(--card-bg); border: 1px solid var(--card-border); border-radius: 20px; padding: 40px; backdrop-filter: blur(12px); color: var(--text-primary); line-height: 1.8;">
+                <h3 style="font-size: 1.4rem; font-weight: 700; margin-bottom: 15px; color: #ffffff; border-bottom: 1px solid var(--card-border); padding-bottom: 8px;">概要</h3>
+                <p style="margin-bottom: 24px;">
+                    当サイト「TrendHub」は、PCゲーム配信プラットフォーム「Steam」で現在セール中、または売上上位にランクインしているゲーム情報と、主要ガジェットメディア（Gizmodo Japan、PC Watch）の新着ニュース記事を毎日自動で集計し、一覧形式でご紹介する速報・まとめサイトです。
+                </p>
+
+                <h3 style="font-size: 1.4rem; font-weight: 700; margin-bottom: 15px; color: #ffffff; border-bottom: 1px solid var(--card-border); padding-bottom: 8px;">データの取得・更新頻度</h3>
+                <p style="margin-bottom: 24px;">
+                    当サイトに掲載されているデータは、プログラムによる自動集計を用いて毎日 16:00 JST 頃に取得・更新されています。データの主な取得元は以下の通りです。
+                </p>
+                <ul style="margin-bottom: 24px; padding-left: 20px; list-style-type: disc;">
+                    <li><strong>ゲーム情報：</strong>Steamストア（セール情報・売上上位ゲームデータ）</li>
+                    <li><strong>ガジェット・テック情報：</strong>Gizmodo Japan、PC Watch のRSSフィード</li>
+                </ul>
+
+                <h3 style="font-size: 1.4rem; font-weight: 700; margin-bottom: 15px; color: #ffffff; border-bottom: 1px solid var(--card-border); padding-bottom: 8px;">ご利用上の注意点</h3>
+                <p style="margin-bottom: 24px;">
+                    当サイトに掲載されている価格、割引率、セール実施状況、および製品仕様などの情報は、データの取得時点（毎日 16:00 JST 頃）のものであり、常に最新の情報を保証するものではありません。<br>
+                    実際のセール実施の有無、販売価格、購入条件などにつきましてさ、必ずリンク先の各配信ストア（Steamストア）または公式販売元（Amazon等）にて直接ご確認ください。当サイトの情報を利用したことにより生じた、いかなるトラブルや不利益についても、当サイトの管理運営者は責任を負いかねます。
+                </p>
+
+                <h3 style="font-size: 1.4rem; font-weight: 700; margin-bottom: 15px; color: #ffffff; border-bottom: 1px solid var(--card-border); padding-bottom: 8px;">お問い合わせ先</h3>
+                <p style="margin-bottom: 0;">
+                    ご意見、ご要望、お問い合わせなどがございましたら、以下の連絡先までご連絡いただきますようお願いいたします。<br>
+                    連絡先メールアドレス：<strong>___@___</strong>
+                </p>
+            </div>
+        </section>
+        """
+
+        about_html = build_page(
+            title="当サイトについて - TrendHub",
+            description="TrendHub（トレンドハブ）のサイト概要、自動集計データに関する説明、および運営者情報・お問い合わせ先を掲載しているページです。",
+            canonical_url=f"{SITE_BASE_URL}/about/",
+            heading="当サイトについて",
+            date_label="運営者情報",
+            game_cards_html="",
+            gadget_cards_html="",
+            archive_html="",
+            depth=1,
+            pick_html="",
+            about_html=about_content_html
+        )
+
+        with open(about_path, mode='w', encoding='utf-8') as f:
+            f.write(about_html)
+        print(f"Aboutページ出力完了！ -> {about_path}")
+
         # style.cssの出力
         with open(css_path, mode='w', encoding='utf-8') as f:
             f.write(css_template)
@@ -1110,7 +1178,7 @@ footer {
         # sitemap.xml / robots.txt の出力
         write_sitemap(docs_dir, archive_dates)
         write_robots(docs_dir)
-        print(f"sitemap.xml / robots.txt 出力完了！（登録URL {len(archive_dates) + 1} 件）")
+        print(f"sitemap.xml / robots.txt 出力完了！（登録URL {len(archive_dates) + 2} 件）")
 
     except Exception as e:
         print(f"Webサイトビルド中にエラーが発生しました: {e}")

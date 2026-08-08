@@ -3,6 +3,51 @@ import urllib.request
 import re
 from typing import List, Dict, Any
 
+# 「49万9,800円」「1万6,980円」「3,320円」を1件として捉える
+_PRICE_RE = re.compile(r'(?:(\d+)\s*万)?\s*(\d{1,3}(?:,\d{3})+|\d+)?\s*円')
+
+# 金額の直後にこれが続くときは値引き額なので、販売価格として採らない
+_DISCOUNT_SUFFIX_RE = re.compile(r'^\s*(?:引き|引|オフ|OFF|off|安く|安|分|相当|お得|得|還元)')
+
+# 金額の直後にこれが続くときは販売価格である見込みが高い
+_PRICE_SUFFIX_RE = re.compile(r'^\s*(?:で(?:販売|発売|提供|購入|登場|発表|投入)|に値下げ|になる)')
+
+PRICE_UNKNOWN = "価格は記事を参照"
+
+
+def _amounts(text: str):
+    """文中の金額を (数値, 直後の文字列) の並びで返します。万表記に対応。"""
+    for m in _PRICE_RE.finditer(text):
+        man, rest = m.group(1), m.group(2)
+        if not man and not rest:
+            continue  # 「3千円」のように数字を伴わない「円」は拾わない
+        value = int(man) * 10000 if man else 0
+        value += int(rest.replace(",", "")) if rest else 0
+        yield value, text[m.end():m.end() + 8]
+
+
+def extract_price(text: str) -> str:
+    """記事の文面から販売価格を取り出します。
+
+    セール記事は「2,920円引きの1万6,980円で販売」のように値引き額を先に書くので、
+    単純に最初の金額を採ると割引額を価格として表示してしまう。
+    「で販売」等が続く金額を優先し、無ければ値引き額でないものを採る。
+    """
+    candidates = list(_amounts(text))
+    if not candidates:
+        return PRICE_UNKNOWN
+
+    for value, after in candidates:
+        if _PRICE_SUFFIX_RE.match(after):
+            return f"{value:,}円"
+
+    for value, after in candidates:
+        if not _DISCOUNT_SUFFIX_RE.match(after):
+            return f"{value:,}円"
+
+    return PRICE_UNKNOWN
+
+
 def get_gadget_trends() -> List[Dict[str, Any]]:
     """
     主要なガジェット・テック系RSSフィードから最新のセール・新製品トレンド情報を取得します。
@@ -66,10 +111,8 @@ def get_gadget_trends() -> List[Dict[str, Any]]:
                     # タイトルにキーワードが含まれるかチェック
                     matched_keyword = next((kw for kw in keywords if kw in title), None)
                     if matched_keyword:
-                        # 簡易的な価格抽出（もしタイトルや説明にあれば）
-                        # 例：「5,980円」「19,800円」などを正規表現で探す
-                        price_match = re.search(r'(\d{1,3}(?:,\d{3})+|\d+)円', title + " " + desc)
-                        price = price_match.group(0) if price_match else "オープン価格/価格情報なし"
+                        # 本文のほうが「N円引きのM円で販売」と書くので、本文を先に見る
+                        price = extract_price(desc + " " + title)
                         
                         # セール系か新製品系か種別判定
                         is_sale = any(kw in title for kw in ["セール", "特価", "割引", "値引き", "クーポン", "プライム"])

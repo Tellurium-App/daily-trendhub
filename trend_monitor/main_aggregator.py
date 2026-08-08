@@ -1,6 +1,8 @@
 import os
 import csv
 import datetime
+import glob
+import html
 import sys
 import urllib.parse
 
@@ -10,7 +12,16 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 from steam_monitor import get_steam_trends
 from gadget_monitor import get_gadget_trends
 
-AMAZON_ASSOCIATE_ID = "trainer-test-22"
+AMAZON_ASSOCIATE_ID = os.environ.get("AMAZON_ASSOCIATE_ID", "trainer-test-22")
+
+# 独自ドメインを取得したら SITE_BASE_URL を差し替えるだけで
+# canonical / OGP / sitemap の URL が一斉に切り替わる。
+SITE_BASE_URL = os.environ.get(
+    "SITE_BASE_URL", "https://tellurium-app.github.io/daily-trendhub"
+).rstrip("/")
+
+# 一覧に載せるアーカイブの最大件数
+ARCHIVE_LIST_LIMIT = 30
 
 def clean_keyword_for_amazon(title: str) -> str:
     """
@@ -34,6 +45,159 @@ def clean_keyword_for_amazon(title: str) -> str:
         clean_title = clean_title[:25]
         
     return clean_title.strip()
+
+def archive_rel_path(d: datetime.date) -> str:
+    """日付からサイトルート起点のアーカイブパス（末尾スラッシュ付き）を組み立てます。"""
+    return f"{d.year:04d}/{d.month:02d}/{d.day:02d}/"
+
+
+def collect_archive_dates(docs_dir: str) -> list:
+    """docs/YYYY/MM/DD/index.html を走査し、新しい順の日付一覧を返します。"""
+    pattern = os.path.join(docs_dir, "[0-9]" * 4, "[0-9]" * 2, "[0-9]" * 2, "index.html")
+    dates = set()
+    for path in glob.glob(pattern):
+        y, m, d = path.replace("\\", "/").split("/")[-4:-1]
+        try:
+            dates.add(datetime.date(int(y), int(m), int(d)))
+        except ValueError:
+            # 2026/02/30 のような実在しない日付のディレクトリは無視する
+            continue
+    return sorted(dates, reverse=True)
+
+
+def build_archive_section(dates: list, depth: int, current: datetime.date = None) -> str:
+    """過去アーカイブへの内部リンク一覧を組み立てます。depth はページの階層の深さ。"""
+    prefix = "../" * depth
+    items = [
+        f'<li><a href="{prefix}{archive_rel_path(d)}">{d.strftime("%Y年%m月%d日")}のトレンド</a></li>'
+        for d in dates[:ARCHIVE_LIST_LIMIT]
+        if d != current
+    ]
+    if not items:
+        return ""
+
+    return f"""
+        <section class="archive-section">
+            <div class="section-title">
+                <h2><span>🗂️</span> 過去のトレンド</h2>
+                <p>日別のアーカイブから、過去のセール状況をさかのぼって見られます。</p>
+            </div>
+            <ul class="archive-list">
+                {"".join(items)}
+            </ul>
+        </section>
+"""
+
+
+def build_page(title: str, description: str, canonical_url: str, heading: str,
+               date_label: str, game_cards_html: str, gadget_cards_html: str,
+               archive_html: str, depth: int) -> str:
+    """1ページ分のHTMLを組み立てます。depth はサイトルートからの階層の深さ。"""
+    prefix = "../" * depth
+    esc_title = html.escape(title)
+    esc_desc = html.escape(description)
+
+    return f"""<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{esc_title}</title>
+    <meta name="description" content="{esc_desc}">
+    <link rel="canonical" href="{canonical_url}">
+    <meta property="og:type" content="website">
+    <meta property="og:site_name" content="TrendHub">
+    <meta property="og:locale" content="ja_JP">
+    <meta property="og:title" content="{esc_title}">
+    <meta property="og:description" content="{esc_desc}">
+    <meta property="og:url" content="{canonical_url}">
+    <meta name="twitter:card" content="summary">
+    <link rel="stylesheet" href="{prefix}style.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;800&amp;family=Outfit:wght@400;700;900&amp;display=swap" rel="stylesheet">
+</head>
+<body>
+    <div class="glass-bg"></div>
+
+    <header>
+        <div class="container header-container">
+            <div class="logo"><a href="{prefix}">TrendHub</a></div>
+            <div class="date-badge">{date_label}</div>
+            <h1>{html.escape(heading)}</h1>
+            <p class="subtitle">ネットの海から、今大注目のセールゲームと最新テック・ガジェットの情報を厳選してお届けしますっ！✨</p>
+        </div>
+    </header>
+
+    <main class="container">
+        <section class="game-section">
+            <div class="section-title">
+                <h2><span>🎮</span> ゲームトレンド (Steam)</h2>
+                <p>セール中や売上上位の人気タイトルを厳選！</p>
+            </div>
+            <div class="grid">
+                {game_cards_html}
+            </div>
+        </section>
+
+        <section class="gadget-section">
+            <div class="section-title">
+                <h2><span>🔌</span> ガジェットトレンド (Gizmodo)</h2>
+                <p>今話題の最新ガジェットやお得なセール情報！</p>
+            </div>
+            <div class="grid">
+                {gadget_cards_html}
+            </div>
+        </section>
+{archive_html}
+    </main>
+
+    <footer>
+        <div class="container footer-container">
+            <p>流行りの移り変わりはとても早いので、お得なアイテムは早めにチェックしてくださいね！🌻</p>
+            <p class="credit">© 2026 TrendHub. Crafted with love by Seren &amp; Trainer.</p>
+        </div>
+    </footer>
+</body>
+</html>"""
+
+
+def write_sitemap(docs_dir: str, dates: list) -> None:
+    """トップと全アーカイブを載せた sitemap.xml を出力します。"""
+    today = datetime.date.today()
+    entries = [(f"{SITE_BASE_URL}/", today)]
+    entries += [(f"{SITE_BASE_URL}/{archive_rel_path(d)}", d) for d in dates]
+
+    body = "\n".join(
+        f"  <url>\n    <loc>{loc}</loc>\n    <lastmod>{d.isoformat()}</lastmod>\n  </url>"
+        for loc, d in entries
+    )
+    xml = (
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n'
+        f"{body}\n"
+        "</urlset>\n"
+    )
+    with open(os.path.join(docs_dir, "sitemap.xml"), mode="w", encoding="utf-8") as f:
+        f.write(xml)
+
+
+def write_robots(docs_dir: str) -> None:
+    """robots.txt を出力します。
+
+    NOTE: GitHub Pages のプロジェクトサイト（*.github.io/daily-trendhub/）では
+    robots.txt はドメイン直下しか読まれないため、このファイルが効くのは
+    独自ドメインを割り当ててから。それまでは Search Console から
+    sitemap.xml を直接送信すること。
+    """
+    content = (
+        "User-agent: *\n"
+        "Allow: /\n"
+        f"Sitemap: {SITE_BASE_URL}/sitemap.xml\n"
+    )
+    with open(os.path.join(docs_dir, "robots.txt"), mode="w", encoding="utf-8") as f:
+        f.write(content)
+
 
 def aggregate_and_draft():
     # ルートディレクトリからの絶対パスで動作するように調整
@@ -93,8 +257,8 @@ def aggregate_and_draft():
     
     markdown_content = []
     markdown_content.append(f"# 【毎日更新】今日のトレンドゲーム＆ガジェット超速報！ - {today_str}\n")
-    markdown_content.append("こんにちは！今日のネット of 海から、今大注目のセールゲームと最新テック・ガジェット of 情報を厳選してお届けしますっ！✨\n")
-    markdown_content.append("「何か面白いゲームないかな？」「今話題 of ガジェットが知りたい！」という方は、ぜひ参考にしてみてくださいね。🌻\n")
+    markdown_content.append("こんにちは！今日のネットの海から、今大注目のセールゲームと最新テック・ガジェットの情報を厳選してお届けしますっ！✨\n")
+    markdown_content.append("「何か面白いゲームないかな？」「今話題のガジェットが知りたい！」という方は、ぜひ参考にしてみてくださいね。🌻\n")
     
     # ゲームセクション
     markdown_content.append("---")
@@ -197,7 +361,7 @@ def aggregate_and_draft():
             """
             game_cards_html.append(card_html)
     else:
-        game_cards_html.append("<p class='no-data'>現在、注目 of ゲーム情報はありません。</p>")
+        game_cards_html.append("<p class='no-data'>現在、注目のゲーム情報はありません。</p>")
 
     # ガジェットのカードHTML構築
     gadget_cards_html = []
@@ -232,62 +396,46 @@ def aggregate_and_draft():
             """
             gadget_cards_html.append(card_html)
     else:
-        gadget_cards_html.append("<p class='no-data'>現在、注目 of ガジェット情報はありません。</p>")
+        gadget_cards_html.append("<p class='no-data'>現在、注目のガジェット情報はありません。</p>")
 
-    # HTMLテンプレートの結合
-    html_template = f"""<!DOCTYPE html>
-<html lang="ja">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>【毎日更新】今日のトレンドゲーム＆ガジェット速報 - {today_str}</title>
-    <link rel="stylesheet" href="style.css">
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;800&family=Outfit:wght@400;700;900&display=swap" rel="stylesheet">
-</head>
-<body>
-    <div class="glass-bg"></div>
-    
-    <header>
-        <div class="container header-container">
-            <div class="logo">TrendHub</div>
-            <div class="date-badge">{today_str} 更新</div>
-            <h1>今日のトレンドゲーム＆ガジェット超速報！</h1>
-            <p class="subtitle">ネット of 海から、今大注目のセールゲームと最新テック・ガジェット of 情報を厳選してお届けしますっ！✨</p>
-        </div>
-    </header>
+    # ページの組み立て（トップと日別アーカイブで本文を共有する）
+    games_joined = "".join(game_cards_html)
+    gadgets_joined = "".join(gadget_cards_html)
 
-    <main class="container">
-        <section class="game-section">
-            <div class="section-title">
-                <h2><span>🎮</span> ゲームトレンド (Steam)</h2>
-                <p>セール中や売上上位 of 人気タイトルを厳選！</p>
-            </div>
-            <div class="grid">
-                {"".join(game_cards_html)}
-            </div>
-        </section>
+    today = datetime.date.today()
+    page_description = (
+        f"{today_str}のSteamセール・売上上位ゲーム{len(games[:6])}件と、"
+        f"最新テック・ガジェット{len(gadgets[:6])}件をまとめて紹介。毎日自動更新のトレンドまとめ。"
+    )
 
-        <section class="gadget-section">
-            <div class="section-title">
-                <h2><span>🔌</span> ガジェットトレンド (Gizmodo)</h2>
-                <p>今話題 of 最新ガジェットやお得なセール情報！</p>
-            </div>
-            <div class="grid">
-                {"".join(gadget_cards_html)}
-            </div>
-        </section>
-    </main>
+    # 既存のアーカイブ＋今日ぶんを新しい順に並べる
+    archive_dates = sorted(set(collect_archive_dates(docs_dir)) | {today}, reverse=True)
 
-    <footer>
-        <div class="container footer-container">
-            <p>流行り of 移り変わりはとても早いので、お得なアイテムは早めにチェックしてくださいね！🌻</p>
-            <p class="credit">© 2026 TrendHub. Crafted with love by Seren & Trainer.</p>
-        </div>
-    </footer>
-</body>
-</html>"""
+    top_html = build_page(
+        title=f"【毎日更新】今日のトレンドゲーム＆ガジェット速報 - {today_str}",
+        description=page_description,
+        canonical_url=f"{SITE_BASE_URL}/",
+        heading="今日のトレンドゲーム＆ガジェット超速報！",
+        date_label=f"{today_str} 更新",
+        game_cards_html=games_joined,
+        gadget_cards_html=gadgets_joined,
+        archive_html=build_archive_section(archive_dates, depth=0, current=today),
+        depth=0,
+    )
+
+    archive_page_html = build_page(
+        title=f"{today_str}のトレンドゲーム＆ガジェット速報",
+        description=page_description,
+        canonical_url=f"{SITE_BASE_URL}/{archive_rel_path(today)}",
+        heading=f"{today_str}のトレンドゲーム＆ガジェット",
+        date_label=f"{today_str} 時点の記録",
+        game_cards_html=games_joined,
+        gadget_cards_html=gadgets_joined,
+        archive_html=build_archive_section(archive_dates, depth=3, current=today),
+        depth=3,
+    )
+
+    archive_path = os.path.join(docs_dir, *archive_rel_path(today).strip("/").split("/"), "index.html")
 
     # CSSテンプレート
     css_template = """:root {
@@ -372,6 +520,12 @@ header::after {
     -webkit-background-clip: text;
     -webkit-text-fill-color: transparent;
     margin-bottom: 20px;
+}
+
+.logo a {
+    color: inherit;
+    text-decoration: none;
+    -webkit-text-fill-color: inherit;
 }
 
 .date-badge {
@@ -626,6 +780,31 @@ section {
     padding: 40px 0;
 }
 
+.archive-list {
+    list-style: none;
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+    gap: 12px;
+}
+
+.archive-list a {
+    display: block;
+    padding: 14px 18px;
+    border: 1px solid var(--card-border);
+    border-radius: 12px;
+    background: var(--card-bg);
+    color: var(--text-primary);
+    text-decoration: none;
+    font-size: 0.95rem;
+    transition: all 0.3s ease;
+}
+
+.archive-list a:hover {
+    border-color: rgba(255, 255, 255, 0.2);
+    background: rgba(255, 255, 255, 0.06);
+    transform: translateY(-2px);
+}
+
 footer {
     border-top: 1px solid var(--card-border);
     padding: 60px 0;
@@ -659,16 +838,27 @@ footer {
 }"""
 
     try:
-        # index.htmlの出力
+        # index.html（トップ＝最新版）の出力
         with open(html_path, mode='w', encoding='utf-8') as f:
-            f.write(html_template)
+            f.write(top_html)
         print("HTMLビルド完了！")
-        
+
+        # 日別アーカイブの出力（URLを日数ぶん積み上げていく）
+        os.makedirs(os.path.dirname(archive_path), exist_ok=True)
+        with open(archive_path, mode='w', encoding='utf-8') as f:
+            f.write(archive_page_html)
+        print(f"アーカイブ出力完了！ -> {archive_path}")
+
         # style.cssの出力
         with open(css_path, mode='w', encoding='utf-8') as f:
             f.write(css_template)
         print("CSSビルド完了！")
-        
+
+        # sitemap.xml / robots.txt の出力
+        write_sitemap(docs_dir, archive_dates)
+        write_robots(docs_dir)
+        print(f"sitemap.xml / robots.txt 出力完了！（登録URL {len(archive_dates) + 1} 件）")
+
     except Exception as e:
         print(f"Webサイトビルド中にエラーが発生しました: {e}")
 

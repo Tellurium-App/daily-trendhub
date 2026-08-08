@@ -10,7 +10,7 @@ def get_gadget_trends() -> List[Dict[str, Any]]:
     # 巡回するRSSフィードのリスト（PC WatchはRDF形式、GizmodoはRSS 2.0形式）
     feeds = [
         {"name": "Gizmodo Japan", "url": "https://www.gizmodo.jp/index.xml"},
-        {"name": "PC Watch", "url": "https://pc.watch.impress.co.jp/data/rss/pcw/index.rdf"}
+        {"name": "PC Watch", "url": "https://pc.watch.impress.co.jp/data/rss/1.0/pcw/feed.rdf"}
     ]
     
     headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}

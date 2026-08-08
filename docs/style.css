@@ -82,6 +82,12 @@ header::after {
     margin-bottom: 20px;
 }
 
+.logo a {
+    color: inherit;
+    text-decoration: none;
+    -webkit-text-fill-color: inherit;
+}
+
 .date-badge {
     background: rgba(255, 255, 255, 0.05);
     border: 1px solid rgba(255, 255, 255, 0.1);
@@ -332,6 +338,31 @@ section {
     grid-column: 1 / -1;
     text-align: center;
     padding: 40px 0;
+}
+
+.archive-list {
+    list-style: none;
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+    gap: 12px;
+}
+
+.archive-list a {
+    display: block;
+    padding: 14px 18px;
+    border: 1px solid var(--card-border);
+    border-radius: 12px;
+    background: var(--card-bg);
+    color: var(--text-primary);
+    text-decoration: none;
+    font-size: 0.95rem;
+    transition: all 0.3s ease;
+}
+
+.archive-list a:hover {
+    border-color: rgba(255, 255, 255, 0.2);
+    background: rgba(255, 255, 255, 0.06);
+    transform: translateY(-2px);
 }
 
 footer {

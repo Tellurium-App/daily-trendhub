@@ -1,0 +1,3 @@
+User-agent: *
+Allow: /
+Sitemap: https://tellurium-app.github.io/daily-trendhub/sitemap.xml

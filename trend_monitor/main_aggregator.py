@@ -220,7 +220,7 @@ def build_archive_section(dates: list, depth: int, current: datetime.date = None
         <section class="archive-section">
             <div class="section-title">
                 <h2><span>🗂️</span> 過去のトレンド</h2>
-                <p>日別のアーカイブから、過去のセール状況をさかのぼって見られます。</p>
+                <p>日別のアーカイブから、過去のランキングやセール状況をさかのぼって見られます。</p>
             </div>
             <ul class="archive-list">
                 {"".join(items)}

@@ -188,6 +188,10 @@ section {
     box-shadow: 0 20px 40px rgba(168, 85, 247, 0.08);
 }
 
+.anime-section .card:hover {
+    box-shadow: 0 20px 40px rgba(236, 72, 153, 0.08);
+}
+
 .gadget-section .card:hover {
     box-shadow: 0 20px 40px rgba(6, 182, 212, 0.08);
 }
@@ -224,6 +228,12 @@ section {
     background: rgba(6, 182, 212, 0.15);
     color: var(--accent-cyan);
     border: 1px solid rgba(6, 182, 212, 0.2);
+}
+
+.badge-anime {
+    background: rgba(236, 72, 153, 0.15);
+    color: var(--accent-pink);
+    border: 1px solid rgba(236, 72, 153, 0.2);
 }
 
 .source {

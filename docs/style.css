@@ -379,6 +379,67 @@ section {
     border: 1px solid rgba(234, 179, 8, 0.25);
 }
 
+.badge-repeat {
+    background: rgba(168, 85, 247, 0.15);
+    color: #c084fc;
+    border: 1px solid rgba(168, 85, 247, 0.25);
+}
+
+.sale-history {
+    font-size: 0.85rem;
+    color: var(--text-secondary);
+    margin-bottom: 16px;
+}
+
+.table-wrap {
+    overflow-x: auto;
+}
+
+.ranking-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.95rem;
+}
+
+.ranking-table th,
+.ranking-table td {
+    padding: 12px 14px;
+    border-bottom: 1px solid var(--card-border);
+    text-align: left;
+}
+
+.ranking-table th {
+    color: var(--text-secondary);
+    font-weight: 600;
+    font-size: 0.85rem;
+}
+
+.ranking-table a {
+    color: var(--text-primary);
+    text-decoration: none;
+    font-weight: 600;
+}
+
+.ranking-table a:hover {
+    color: var(--accent-cyan);
+}
+
+.ranking-table .rank {
+    font-family: var(--font-display);
+    font-weight: 800;
+    font-size: 1.2rem;
+}
+
+.ranking-table .num {
+    white-space: nowrap;
+    font-variant-numeric: tabular-nums;
+}
+
+.ranking-table .of {
+    color: var(--text-secondary);
+    font-size: 0.8rem;
+}
+
 .pick-section {
     margin-bottom: 60px;
 }

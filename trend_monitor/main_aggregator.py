@@ -13,6 +13,7 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 from steam_monitor import get_steam_trends
 from gadget_monitor import get_gadget_trends
+from anime_monitor import get_anime_trends
 
 # アソシエイトIDが未設定のうちは tag を付けず、ただのAmazon検索リンクとして出す。
 # 広告にならないので、この間はステマ規制の表記義務も発生しない。
@@ -82,8 +83,8 @@ def parse_discount(row: dict) -> int:
     return int(m.group(1)) if m else 0
 
 
-def load_game_history(csv_path: str) -> dict:
-    """CSVの全履歴から、ゲームID別の「掲載された日」と「セール中だった日」を集めます。
+def load_history(csv_path: str, type_prefix: str) -> dict:
+    """CSVの全履歴から、タイプが type_prefix で始まる行のID別に「掲載された日」と「セール中だった日」を集めます。
 
     今日ぶんの行を書き込んだ後に呼ぶ前提。日付を集合で持つので、
     1日に複数回実行しても二重に数えられない。
@@ -94,7 +95,7 @@ def load_game_history(csv_path: str) -> dict:
 
     with open(csv_path, encoding="utf-8-sig", newline="") as f:
         for row in csv.DictReader(f):
-            if not (row.get("タイプ") or "").startswith("game"):
+            if not (row.get("タイプ") or "").startswith(type_prefix):
                 continue
             gid, day = row.get("ID"), (row.get("取得日時") or "")[:10]
             if not gid or not day:
@@ -231,7 +232,7 @@ def build_archive_section(dates: list, depth: int, current: datetime.date = None
 def build_page(title: str, description: str, canonical_url: str, heading: str,
                date_label: str, game_cards_html: str, gadget_cards_html: str,
                archive_html: str, depth: int, pick_html: str = "",
-               about_html: str = "") -> str:
+               about_html: str = "", anime_cards_html: str = "") -> str:
     """1ページ分のHTMLを組み立てます。depth はサイトルートからの階層の深さ。"""
     prefix = "../" * depth
     esc_title = html.escape(title)
@@ -258,6 +259,16 @@ def build_page(title: str, description: str, canonical_url: str, heading: str,
             </div>
             <div class="grid">
                 {game_cards_html}
+            </div>
+        </section>
+
+        <section class="anime-section">
+            <div class="section-title">
+                <h2><span>📺</span> 放送中アニメの話題作</h2>
+                <p>AniList の話題度（海外を含む利用者の直近の反応）が高い、放送中の日本のアニメです。</p>
+            </div>
+            <div class="grid">
+                {anime_cards_html}
             </div>
         </section>
 
@@ -300,7 +311,7 @@ def build_page(title: str, description: str, canonical_url: str, heading: str,
             <div class="logo"><a href="{prefix}">TrendHub</a></div>
             <div class="date-badge">{date_label}</div>
             <h1>{html.escape(heading)}</h1>
-            <p class="subtitle">Steamのセール・売上上位ゲームと、ガジェット系メディアの新着ニュースを毎日自動集計してお届けする情報サイトです。</p>
+            <p class="subtitle">Steamのセール・売上上位ゲーム、放送中アニメの話題作、ガジェット系メディアの新着ニュースを毎日自動集計してお届けする情報サイトです。</p>
         </div>
     </header>
 {notice_html}
@@ -375,9 +386,10 @@ def aggregate_and_draft():
     
     print("データ収集中...")
     games = get_steam_trends()
+    anime = get_anime_trends()
     gadgets = get_gadget_trends()
-    
-    all_items = games + gadgets
+
+    all_items = games + anime + gadgets
     now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     
     # 1. CSVへの保存（Excelの文字化けを防ぐため utf-8-sig を使用）
@@ -484,8 +496,9 @@ def aggregate_and_draft():
 
     # 過去の掲載履歴を読み込む（今日ぶんは上でCSVに書き込み済み）
     today_date = datetime.date.today()
-    history = load_game_history(csv_path)
-    print(f"掲載履歴を読み込み: {len(history)} タイトル")
+    history = load_history(csv_path, "game")
+    anime_history = load_history(csv_path, "anime")
+    print(f"掲載履歴を読み込み: ゲーム {len(history)} / アニメ {len(anime_history)} タイトル")
 
     # ゲームのカードHTML構築
     game_cards_html = []
@@ -537,6 +550,33 @@ def aggregate_and_draft():
     else:
         game_cards_html.append("<p class='no-data'>現在、対象のゲーム情報はありません。</p>")
 
+    # アニメのカードHTML構築（価格は無いので、履歴バッジと作品情報だけ出す）
+    anime_cards_html = []
+    if anime:
+        for item in anime[:6]:  # 最大6件
+            history_badges = build_history_badges(item_stats(item, anime_history, today_date))
+            card_html = f"""
+            <div class="card">
+                <div>
+                    <div class="card-header">
+                        <span class="badge badge-anime">TRENDING</span>
+                        <span class="source">AniList</span>
+                    </div>
+                    <h3>{html.escape(item['title'])}</h3>
+                    <div class="history-badges">{history_badges}</div>
+                    <p class="description">{html.escape(item['description'])}</p>
+                </div>
+                <div>
+                    <div class="btn-container">
+                        <a href="{html.escape(item['url'], quote=True)}" target="_blank" class="btn btn-secondary">AniListで作品情報を見る</a>
+                    </div>
+                </div>
+            </div>
+            """
+            anime_cards_html.append(card_html)
+    else:
+        anime_cards_html.append("<p class='no-data'>現在、対象のアニメ情報はありません。</p>")
+
     # ガジェットのカードHTML構築
     gadget_cards_html = []
     if gadgets:
@@ -574,10 +614,11 @@ def aggregate_and_draft():
     # ページの組み立て（トップと日別アーカイブで本文を共有する）
     games_joined = "".join(game_cards_html)
     gadgets_joined = "".join(gadget_cards_html)
+    anime_joined = "".join(anime_cards_html)
 
     today = datetime.date.today()
     page_description = (
-        f"{today_str}時点のSteamセール・売上上位ゲームと、"
+        f"{today_str}時点のSteamセール・売上上位ゲーム、放送中アニメの話題作、"
         f"ガジェット・製品情報の新着ニュースを毎日自動集計。過去アーカイブも掲載中。"
     )
 
@@ -590,20 +631,21 @@ def aggregate_and_draft():
         print(f"今日の一本: {pick['title']} / {pick_reason}")
 
     top_html = build_page(
-        title=f"TrendHub - ゲーム＆ガジェットトレンド自動集計速報 ({today_str})",
+        title=f"TrendHub - ゲーム・アニメ・ガジェットトレンド自動集計速報 ({today_str})",
         description=page_description,
         canonical_url=f"{SITE_BASE_URL}/",
-        heading="TrendHub - ゲーム＆ガジェットトレンド速報",
+        heading="TrendHub - ゲーム・アニメ・ガジェット速報",
         date_label=f"{today_str} 更新",
         game_cards_html=games_joined,
         gadget_cards_html=gadgets_joined,
         archive_html=build_archive_section(archive_dates, depth=0, current=today),
         depth=0,
         pick_html=pick_html,
+        anime_cards_html=anime_joined,
     )
 
     archive_page_html = build_page(
-        title=f"TrendHub - ゲーム＆ガジェットトレンド速報 ({today_str} 時点の記録)",
+        title=f"TrendHub - ゲーム・アニメ・ガジェットトレンド速報 ({today_str} 時点の記録)",
         description=page_description,
         canonical_url=f"{SITE_BASE_URL}/{archive_rel_path(today)}",
         heading=f"TrendHub - {today_str} 時点のトレンド記録",
@@ -613,6 +655,7 @@ def aggregate_and_draft():
         archive_html=build_archive_section(archive_dates, depth=3, current=today),
         depth=3,
         pick_html=pick_html,
+        anime_cards_html=anime_joined,
     )
 
     archive_path = os.path.join(docs_dir, *archive_rel_path(today).strip("/").split("/"), "index.html")
@@ -808,6 +851,10 @@ section {
     box-shadow: 0 20px 40px rgba(168, 85, 247, 0.08);
 }
 
+.anime-section .card:hover {
+    box-shadow: 0 20px 40px rgba(236, 72, 153, 0.08);
+}
+
 .gadget-section .card:hover {
     box-shadow: 0 20px 40px rgba(6, 182, 212, 0.08);
 }
@@ -844,6 +891,12 @@ section {
     background: rgba(6, 182, 212, 0.15);
     color: var(--accent-cyan);
     border: 1px solid rgba(6, 182, 212, 0.2);
+}
+
+.badge-anime {
+    background: rgba(236, 72, 153, 0.15);
+    color: var(--accent-pink);
+    border: 1px solid rgba(236, 72, 153, 0.2);
 }
 
 .source {
@@ -1125,7 +1178,7 @@ footer {
             <div class="about-card" style="background: var(--card-bg); border: 1px solid var(--card-border); border-radius: 20px; padding: 40px; backdrop-filter: blur(12px); color: var(--text-primary); line-height: 1.8;">
                 <h3 style="font-size: 1.4rem; font-weight: 700; margin-bottom: 15px; color: #ffffff; border-bottom: 1px solid var(--card-border); padding-bottom: 8px;">概要</h3>
                 <p style="margin-bottom: 24px;">
-                    当サイト「TrendHub」は、PCゲーム配信プラットフォーム「Steam」で現在セール中、または売上上位にランクインしているゲーム情報と、主要ガジェットメディア（Gizmodo Japan、PC Watch）の新着ニュース記事を毎日自動で集計し、一覧形式でご紹介する速報・まとめサイトです。
+                    当サイト「TrendHub」は、PCゲーム配信プラットフォーム「Steam」で現在セール中、または売上上位にランクインしているゲーム情報、アニメデータベース「AniList」で話題になっている放送中アニメ、主要ガジェットメディア（Gizmodo Japan、PC Watch）の新着ニュース記事を毎日自動で集計し、一覧形式でご紹介する速報・まとめサイトです。
                 </p>
 
                 <h3 style="font-size: 1.4rem; font-weight: 700; margin-bottom: 15px; color: #ffffff; border-bottom: 1px solid var(--card-border); padding-bottom: 8px;">データの取得・更新頻度</h3>
@@ -1134,6 +1187,7 @@ footer {
                 </p>
                 <ul style="margin-bottom: 24px; padding-left: 20px; list-style-type: disc;">
                     <li><strong>ゲーム情報：</strong>Steamストア（セール情報・売上上位ゲームデータ）</li>
+                    <li><strong>アニメ情報：</strong>AniList（放送中の日本制作アニメを、利用者の直近の反応にもとづく話題度順に取得）</li>
                     <li><strong>ガジェット・テック情報：</strong>Gizmodo Japan、PC Watch のRSSフィード</li>
                 </ul>
 

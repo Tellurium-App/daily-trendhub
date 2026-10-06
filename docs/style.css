@@ -188,6 +188,10 @@ section {
     box-shadow: 0 20px 40px rgba(168, 85, 247, 0.08);
 }
 
+.free-section .card:hover {
+    box-shadow: 0 20px 40px rgba(34, 197, 94, 0.08);
+}
+
 .anime-section .card:hover {
     box-shadow: 0 20px 40px rgba(236, 72, 153, 0.08);
 }
@@ -228,6 +232,24 @@ section {
     background: rgba(6, 182, 212, 0.15);
     color: var(--accent-cyan);
     border: 1px solid rgba(6, 182, 212, 0.2);
+}
+
+.badge-free {
+    background: rgba(34, 197, 94, 0.15);
+    color: #4ade80;
+    border: 1px solid rgba(34, 197, 94, 0.25);
+}
+
+.badge-next {
+    background: rgba(255, 255, 255, 0.06);
+    color: var(--text-secondary);
+    border: 1px solid var(--card-border);
+}
+
+.free-period {
+    font-size: 0.9rem;
+    color: var(--text-secondary);
+    margin-bottom: 16px;
 }
 
 .badge-anime {

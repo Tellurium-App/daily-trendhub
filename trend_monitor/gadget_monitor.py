@@ -10,20 +10,31 @@ _PRICE_RE = re.compile(r'(?:(\d+)\s*万)?\s*(\d{1,3}(?:,\d{3})+|\d+)?\s*円')
 _DISCOUNT_SUFFIX_RE = re.compile(r'^\s*(?:引き|引|オフ|OFF|off|安く|安|分|相当|お得|得|還元)')
 
 # 金額の直後にこれが続くときは販売価格である見込みが高い
-_PRICE_SUFFIX_RE = re.compile(r'^\s*(?:で(?:販売|発売|提供|購入|登場|発表|投入)|に値下げ|になる)')
+_PRICE_SUFFIX_RE = re.compile(r'^\s*(?:で(?:販売|発売|提供|購入|登場|発表|投入)|にて(?:販売|購入)|に値下げ|になる)')
+
+# 金額の直前がこれで終わるときも販売価格（「2,000円引きの1万9,980円、」のように後ろに何も続かない書き方がある）
+_PRICE_PREFIX_RE = re.compile(r'(?:引きの|引きとなる|引きで、?|値下げの)\s*$')
+
+# 金額の直後にこれが続くときは、そもそも価格ではない（「1円玉」「5万円台」「157円換算」）
+_NOT_PRICE_SUFFIX_RE = re.compile(r'^\s*(?:玉|硬貨|台|換算)')
+
+# 金額の手前にこれがあるときは単価（「1食あたり約297円」「100万トークン当たり2ドル(約314円)」）
+_UNIT_PRICE_RE = re.compile(r'(?:当たり|あたり)')
+_UNIT_PRICE_WINDOW = 50
 
 PRICE_UNKNOWN = "価格は記事を参照"
 
 
 def _amounts(text: str):
-    """文中の金額を (数値, 直後の文字列) の並びで返します。万表記に対応。"""
+    """文中の金額を (数値, 直前の文字列, 直後の文字列) の並びで返します。万表記に対応。"""
     for m in _PRICE_RE.finditer(text):
         man, rest = m.group(1), m.group(2)
         if not man and not rest:
             continue  # 「3千円」のように数字を伴わない「円」は拾わない
         value = int(man) * 10000 if man else 0
         value += int(rest.replace(",", "")) if rest else 0
-        yield value, text[m.end():m.end() + 8]
+        before = text[max(0, m.start() - _UNIT_PRICE_WINDOW):m.start()]
+        yield value, before, text[m.end():m.end() + 8]
 
 
 def extract_price(text: str) -> str:
@@ -31,17 +42,21 @@ def extract_price(text: str) -> str:
 
     セール記事は「2,920円引きの1万6,980円で販売」のように値引き額を先に書くので、
     単純に最初の金額を採ると割引額を価格として表示してしまう。
-    「で販売」等が続く金額を優先し、無ければ値引き額でないものを採る。
+    価格でない金額（1円玉・単価など）を除いたうえで、「で販売」等が続くか
+    「〜円引きの」の直後にある金額を前から探し、無ければ値引き額でないものを採る。
     """
-    candidates = list(_amounts(text))
+    candidates = [
+        (value, before, after) for value, before, after in _amounts(text)
+        if not _NOT_PRICE_SUFFIX_RE.match(after) and not _UNIT_PRICE_RE.search(before)
+    ]
     if not candidates:
         return PRICE_UNKNOWN
 
-    for value, after in candidates:
-        if _PRICE_SUFFIX_RE.match(after):
+    for value, before, after in candidates:
+        if _PRICE_SUFFIX_RE.match(after) or _PRICE_PREFIX_RE.search(before):
             return f"{value:,}円"
 
-    for value, after in candidates:
+    for value, before, after in candidates:
         if not _DISCOUNT_SUFFIX_RE.match(after):
             return f"{value:,}円"
 

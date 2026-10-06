@@ -24,7 +24,7 @@ IS_AFFILIATE = bool(AMAZON_ASSOCIATE_ID)
 
 # Cloudflare Web Analytics のトークン。ページに埋め込まれて誰でも見える値なので、秘密情報ではない。
 # 空のあいだは計測タグを出さない。Cookie を使わない計測なので同意バナーは不要。
-CF_ANALYTICS_TOKEN = ""
+CF_ANALYTICS_TOKEN = "0e3fd7d7d06d497d8400c3b02d6a2e86"
 
 ANALYTICS_NOTICE_HTML = """                <h3 style="font-size: 1.4rem; font-weight: 700; margin-bottom: 15px; color: #ffffff; border-bottom: 1px solid var(--card-border); padding-bottom: 8px;">アクセス解析について</h3>
                 <p style="margin-bottom: 24px;">

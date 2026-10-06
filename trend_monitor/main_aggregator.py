@@ -491,9 +491,6 @@ def build_page(title: str, description: str, canonical_url: str, heading: str,
     <meta property="og:url" content="{canonical_url}">
     <meta name="twitter:card" content="summary">
     <link rel="stylesheet" href="{prefix}style.css">
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;800&amp;family=Outfit:wght@400;700;900&amp;display=swap" rel="stylesheet">
 </head>
 <body>
     <div class="glass-bg"></div>
@@ -966,8 +963,9 @@ def aggregate_and_draft():
     --accent-cyan: #06b6d4;
     --accent-pink: #ec4899;
     --grad-header: linear-gradient(135deg, #1e1b4b 0%, #0f172a 100%);
-    --font-sans: 'Inter', sans-serif;
-    --font-display: 'Outfit', sans-serif;
+    /* 日本語が主なので、英字専用のWebフォントは読み込まず端末の日本語フォントを使う */
+    --font-sans: system-ui, -apple-system, "Hiragino Sans", "Hiragino Kaku Gothic ProN", "Noto Sans JP", "Yu Gothic UI", Meiryo, sans-serif;
+    --font-display: var(--font-sans);
 }
 
 * {
@@ -1006,7 +1004,7 @@ body {
 
 header {
     background: var(--grad-header);
-    padding: 80px 0 60px;
+    padding: 36px 0 28px;
     position: relative;
     border-bottom: 1px solid var(--card-border);
     text-align: center;
@@ -1037,7 +1035,7 @@ header::after {
     background: linear-gradient(to right, var(--accent-purple), var(--accent-pink));
     -webkit-background-clip: text;
     -webkit-text-fill-color: transparent;
-    margin-bottom: 20px;
+    margin-bottom: 10px;
 }
 
 .logo a {
@@ -1054,28 +1052,28 @@ header::after {
     font-size: 0.85rem;
     font-weight: 600;
     color: var(--text-secondary);
-    margin-bottom: 24px;
+    margin-bottom: 12px;
 }
 
 header h1 {
     font-family: var(--font-display);
-    font-size: 3rem;
+    font-size: 2rem;
     font-weight: 800;
-    margin-bottom: 16px;
-    letter-spacing: -0.03em;
+    margin-bottom: 8px;
+    line-height: 1.35;
     background: linear-gradient(to right, #ffffff, #e2e8f0);
     -webkit-background-clip: text;
     -webkit-text-fill-color: transparent;
 }
 
 .subtitle {
-    font-size: 1.1rem;
+    font-size: 0.95rem;
     color: var(--text-secondary);
     max-width: 600px;
 }
 
 main {
-    padding: 60px 0;
+    padding: 32px 0 60px;
 }
 
 section {
@@ -1519,11 +1517,15 @@ footer {
 
 @media (max-width: 768px) {
     header h1 {
-        font-size: 2.2rem;
+        font-size: 1.35rem;
     }
-    
+
     header {
-        padding: 60px 0 40px;
+        padding: 20px 0 16px;
+    }
+
+    .subtitle {
+        font-size: 0.85rem;
     }
     
     .grid {

@@ -22,6 +22,15 @@ from anime_monitor import get_anime_trends
 AMAZON_ASSOCIATE_ID = os.environ.get("AMAZON_ASSOCIATE_ID", "").strip()
 IS_AFFILIATE = bool(AMAZON_ASSOCIATE_ID)
 
+# Cloudflare Web Analytics のトークン。ページに埋め込まれて誰でも見える値なので、秘密情報ではない。
+# 空のあいだは計測タグを出さない。Cookie を使わない計測なので同意バナーは不要。
+CF_ANALYTICS_TOKEN = ""
+
+ANALYTICS_NOTICE_HTML = """                <h3 style="font-size: 1.4rem; font-weight: 700; margin-bottom: 15px; color: #ffffff; border-bottom: 1px solid var(--card-border); padding-bottom: 8px;">アクセス解析について</h3>
+                <p style="margin-bottom: 24px;">
+                    当サイトでは、サイトの利用状況を把握するために Cloudflare Web Analytics を利用しています。Cookie は使用せず、閲覧者個人を特定する情報は収集しません。取得するのは、閲覧されたページ、参照元、ブラウザの種類、国・地域などの集計情報です。
+                </p>"""
+
 # 独自ドメインを取得したら SITE_BASE_URL を差し替えるだけで
 # canonical / OGP / sitemap の URL が一斉に切り替わる。
 SITE_BASE_URL = os.environ.get(
@@ -425,6 +434,12 @@ def build_page(title: str, description: str, canonical_url: str, heading: str,
         if IS_AFFILIATE else ""
     )
 
+    analytics_html = (
+        f"\n    <script defer src='https://static.cloudflareinsights.com/beacon.min.js' "
+        f"data-cf-beacon='{{\"token\": \"{CF_ANALYTICS_TOKEN}\"}}'></script>"
+        if CF_ANALYTICS_TOKEN else ""
+    )
+
     if about_html:
         main_content = about_html
     else:
@@ -503,6 +518,7 @@ def build_page(title: str, description: str, canonical_url: str, heading: str,
             <p class="credit">© 2026 TrendHub. Crafted with love by Seren &amp; Trainer.</p>
         </div>
     </footer>
+{analytics_html}
 </body>
 </html>"""
 
@@ -1560,6 +1576,7 @@ footer {
                     実際のセール実施の有無、販売価格、購入条件などにつきましては、必ずリンク先の各配信ストア（Steamストア）または公式販売元（Amazon等）にて直接ご確認ください。当サイトの情報を利用したことにより生じた、いかなるトラブルや不利益についても、当サイトの管理運営者は責任を負いかねます。
                 </p>
 
+{ANALYTICS_NOTICE}
                 <h3 style="font-size: 1.4rem; font-weight: 700; margin-bottom: 15px; color: #ffffff; border-bottom: 1px solid var(--card-border); padding-bottom: 8px;">お問い合わせ先</h3>
                 <p style="margin-bottom: 0;">
                     ご意見、ご要望、お問い合わせなどがございましたら、以下の連絡先までご連絡いただきますようお願いいたします。<br>
@@ -1568,6 +1585,9 @@ footer {
             </div>
         </section>
         """
+
+        # トークンを入れた時だけ、アクセス解析の説明を出す
+        about_content_html = about_content_html.replace("{ANALYTICS_NOTICE}", ANALYTICS_NOTICE_HTML if CF_ANALYTICS_TOKEN else "")
 
         about_html = build_page(
             title="当サイトについて - TrendHub",

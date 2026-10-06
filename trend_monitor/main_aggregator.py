@@ -37,6 +37,14 @@ CSV_HEADER = ["ID", "タイプ", "見出し", "タイトル", "価格情報", "U
 # 「〇日連続ランクイン」を出す下限。短すぎると全部に付いて意味がなくなる。
 STREAK_BADGE_MIN_DAYS = 3
 
+# セール一覧から外れていた日数がこれ以下なら、同じセールが続いているとみなす。
+# 7/18〜10/5 の実測で、間が1〜8日の再登場は割引率もほぼ同じ（一覧から一時的に外れただけ）、
+# 12日以上空くと別のセールだった。
+SALE_GAP_DAYS = 10
+
+# 月間ランキングの掲載件数
+MONTHLY_TOP_N = 10
+
 # 景表法（ステマ規制）が求める広告表示と、Amazonアソシエイト運営規約が求める表示。
 # 文言は改定されうるので、申請前にアソシエイト・セントラルで最新版を確認すること。
 AFFILIATE_NOTICE = "本ページはプロモーションを含みます。商品リンクの一部はアフィリエイトリンクです。"
@@ -89,7 +97,7 @@ def load_history(csv_path: str, type_prefix: str) -> dict:
     今日ぶんの行を書き込んだ後に呼ぶ前提。日付を集合で持つので、
     1日に複数回実行しても二重に数えられない。
     """
-    history = collections.defaultdict(lambda: {"days": set(), "sale_days": set()})
+    history = collections.defaultdict(lambda: {"days": set(), "sale_disc": {}})
     if not os.path.exists(csv_path):
         return history
 
@@ -101,8 +109,10 @@ def load_history(csv_path: str, type_prefix: str) -> dict:
             if not gid or not day:
                 continue
             history[gid]["days"].add(day)
-            if parse_discount(row) > 0:
-                history[gid]["sale_days"].add(day)
+            discount = parse_discount(row)
+            if discount > 0:
+                prev = history[gid]["sale_disc"].get(day, 0)
+                history[gid]["sale_disc"][day] = max(prev, discount)
     return history
 
 
@@ -115,13 +125,34 @@ def consecutive_days(days: set, today: datetime.date) -> int:
     return count
 
 
+def sale_episodes(sale_disc: dict) -> list:
+    """日別の割引率から、セールを (開始日, 終了日, 最大割引率) の並びに区切ります。
+
+    間が SALE_GAP_DAYS 日以下なら、一覧から一時的に外れただけとして同じセールにまとめる。
+    """
+    episodes = []
+    for day in sorted(datetime.date.fromisoformat(d) for d in sale_disc):
+        disc = sale_disc[day.isoformat()]
+        if episodes and (day - episodes[-1][1]).days - 1 <= SALE_GAP_DAYS:
+            start, _, top = episodes[-1]
+            episodes[-1] = (start, day, max(top, disc))
+        else:
+            episodes.append((day, day, disc))
+    return episodes
+
+
 def item_stats(item: dict, history: dict, today: datetime.date) -> dict:
     """1件ぶんの履歴指標をまとめます。Steamのストアページには出ていない情報。"""
-    stat = history.get(str(item.get("id")), {"days": set(), "sale_days": set()})
+    stat = history.get(str(item.get("id")), {"days": set(), "sale_disc": {}})
+    episodes = sale_episodes(stat["sale_disc"])
+    on_sale_today = bool(episodes) and episodes[-1][1] == today
     return {
         "listed_total": len(stat["days"]),
         "listed_run": consecutive_days(stat["days"], today),
-        "sale_run": consecutive_days(stat["sale_days"], today),
+        # 一覧から一時的に外れた日も含めて、今回のセールが始まってから何日目か
+        "sale_run": (today - episodes[-1][0]).days + 1 if on_sale_today else 0,
+        "sale_count": len(episodes) if on_sale_today else 0,
+        "prev_sale": episodes[-2] if on_sale_today and len(episodes) >= 2 else None,
         "discount": item.get("discount_percent", 0) or 0,
     }
 
@@ -133,10 +164,22 @@ def build_history_badges(stats: dict) -> str:
         badges.append('<span class="badge badge-new">NEW 初登場</span>')
     if stats["sale_run"] >= 2:
         badges.append(f'<span class="badge badge-streak">SALE {stats["sale_run"]}日目</span>')
+    if stats.get("sale_count", 0) >= 2:
+        badges.append(f'<span class="badge badge-repeat">記録上{stats["sale_count"]}回目のセール</span>')
     # 掲載日数がセール日数と同じなら数字が二重になるだけなので、長い時だけ出す
     if stats["listed_run"] >= STREAK_BADGE_MIN_DAYS and stats["listed_run"] > stats["sale_run"]:
         badges.append(f'<span class="badge badge-regular">RANK {stats["listed_run"]}日連続</span>')
     return "".join(badges)
+
+
+def build_sale_note(stats: dict, today: datetime.date) -> str:
+    """前回のセールの終了日と割引率を1行で返します。2回目以降のセールの時だけ。"""
+    prev = stats.get("prev_sale")
+    if not prev:
+        return ""
+    _, end, top = prev
+    return (f'<p class="sale-history">前回のセール：{end.month}月{end.day}日まで'
+            f' 最大{top}%OFF（{(today - end).days}日前）</p>')
 
 
 def pick_of_the_day(games: list, history: dict, today: datetime.date):
@@ -152,7 +195,7 @@ def pick_of_the_day(games: list, history: dict, today: datetime.date):
 
     g, s = max(scored, key=lambda x: x[1]["sale_run"])
     if s["sale_run"] >= 5:
-        return g, f"現在 {s['sale_run']} 日連続でセールを継続中です。価格は予告なく変更される場合があります。"
+        return g, f"当サイトの記録では、今回のセールは {s['sale_run']} 日目です。価格は予告なく変更される場合があります。"
 
     g, s = max(scored, key=lambda x: x[1]["listed_run"])
     if s["listed_run"] >= STREAK_BADGE_MIN_DAYS:
@@ -182,6 +225,119 @@ def build_pick_section(pick: dict, reason: str) -> str:
                 <div class="pick-price">{price:.0f}円</div>
                 <a href="{html.escape(pick['url'], quote=True)}" target="_blank" class="btn btn-primary">Steamで詳細を見る</a>
             </div>
+        </section>
+"""
+
+
+def complete_months(csv_path: str, today: datetime.date) -> list:
+    """月初から記録があり、すでに終わっている月を新しい順に返します。"""
+    if not os.path.exists(csv_path):
+        return []
+    with open(csv_path, encoding="utf-8-sig", newline="") as f:
+        days = {(row.get("取得日時") or "")[:10] for row in csv.DictReader(f)}
+    days.discard("")
+    if not days:
+        return []
+    first = datetime.date.fromisoformat(min(days))
+    if first.day == 1:
+        y, m = first.year, first.month
+    else:
+        y, m = (first.year + 1, 1) if first.month == 12 else (first.year, first.month + 1)
+    months = []
+    while (y, m) < (today.year, today.month):
+        months.append((y, m))
+        y, m = (y + 1, 1) if m == 12 else (y, m + 1)
+    return sorted(months, reverse=True)
+
+
+def month_last_day(y: int, m: int) -> datetime.date:
+    return datetime.date(y + (m == 12), m % 12 + 1, 1) - datetime.timedelta(days=1)
+
+
+def monthly_ranking(csv_path: str, y: int, m: int) -> list:
+    """その月に売上上位の一覧へ載っていた日数の多い順に、ゲームを並べて返します。"""
+    prefix = f"{y:04d}-{m:02d}"
+    listed = collections.defaultdict(set)
+    sale = collections.defaultdict(dict)
+    info = {}
+    with open(csv_path, encoding="utf-8-sig", newline="") as f:
+        for row in csv.DictReader(f):
+            day = (row.get("取得日時") or "")[:10]
+            if not day.startswith(prefix):
+                continue
+            gid, kind = row.get("ID"), row.get("タイプ") or ""
+            if kind == "game_top_seller":
+                listed[gid].add(day)
+                info[gid] = (row["タイトル"].strip(), row["URL"])
+            if kind.startswith("game") and parse_discount(row) > 0:
+                sale[gid][day] = max(sale[gid].get(day, 0), parse_discount(row))
+
+    ranked = sorted(listed, key=lambda g: (-len(listed[g]), min(listed[g])))
+    return [{
+        "title": info[g][0],
+        "url": info[g][1],
+        "days": len(listed[g]),
+        "first": min(listed[g]),
+        "last": max(listed[g]),
+        "max_discount": max(sale[g].values()) if sale[g] else 0,
+    } for g in ranked[:MONTHLY_TOP_N]]
+
+
+def monthly_rel_path(y: int, m: int) -> str:
+    return f"monthly/{y:04d}/{m:02d}/"
+
+
+def build_monthly_content(y: int, m: int, ranking: list) -> str:
+    """月間ランキングページの本文を組み立てます。"""
+    days_in_month = month_last_day(y, m).day
+
+    def md(iso):
+        d = datetime.date.fromisoformat(iso)
+        return f"{d.month}/{d.day}"
+
+    rows = "".join(f"""
+                <tr>
+                    <td class="rank">{i}</td>
+                    <td><a href="{html.escape(r['url'], quote=True)}" target="_blank">{html.escape(r['title'])}</a></td>
+                    <td class="num">{r['days']}<span class="of">/{days_in_month}日</span></td>
+                    <td class="num">{md(r['first'])}〜{md(r['last'])}</td>
+                    <td class="num">{f"最大{r['max_discount']}%OFF" if r['max_discount'] else "—"}</td>
+                </tr>""" for i, r in enumerate(ranking, 1))
+    return f"""
+        <section class="monthly-section">
+            <div class="section-title">
+                <h2><span>🏆</span> {y}年{m}月 Steam売上上位の常連ゲームTOP{len(ranking)}</h2>
+                <p>Steamストアの売上上位一覧を毎日1回記録し、{y}年{m}月の{days_in_month}日間で掲載された日数が多い順に並べました。セール欄は、同じ月にセール一覧で確認できた最大の割引率です。</p>
+            </div>
+            <div class="table-wrap">
+            <table class="ranking-table">
+                <thead><tr><th>順位</th><th>タイトル</th><th>掲載日数</th><th>掲載期間</th><th>月内のセール</th></tr></thead>
+                <tbody>{rows}
+                </tbody>
+            </table>
+            </div>
+        </section>
+"""
+
+
+def build_monthly_links(months: list, depth: int) -> str:
+    """月間ランキングへのリンク一覧です。"""
+    if not months:
+        return ""
+    prefix = "../" * depth
+    items = "".join(
+        f'<li><a href="{prefix}{monthly_rel_path(y, m)}">{y}年{m}月の常連ゲームTOP{MONTHLY_TOP_N}</a></li>'
+        for y, m in months
+    )
+    return f"""
+        <section class="archive-section">
+            <div class="section-title">
+                <h2><span>🏆</span> 月間ランキング</h2>
+                <p>1か月のあいだ、Steamの売上上位に長く載り続けたゲームのランキングです。</p>
+            </div>
+            <ul class="archive-list">
+                {items}
+            </ul>
         </section>
 """
 
@@ -330,14 +486,16 @@ def build_page(title: str, description: str, canonical_url: str, heading: str,
 </html>"""
 
 
-def write_sitemap(docs_dir: str, dates: list) -> None:
-    """トップ、Aboutページ、全アーカイブを載せた sitemap.xml を出力します。"""
+def write_sitemap(docs_dir: str, dates: list, months: list = ()) -> None:
+    """トップ、Aboutページ、全アーカイブ、月間ランキングを載せた sitemap.xml を出力します。"""
     today = datetime.date.today()
     entries = [
         (f"{SITE_BASE_URL}/", today),
         (f"{SITE_BASE_URL}/about/", today)
     ]
     entries += [(f"{SITE_BASE_URL}/{archive_rel_path(d)}", d) for d in dates]
+    # 月間ページの中身は月末で確定するので、lastmod は月末日にする
+    entries += [(f"{SITE_BASE_URL}/{monthly_rel_path(y, m)}", month_last_day(y, m)) for y, m in months]
 
     body = "\n".join(
         f"  <url>\n    <loc>{loc}</loc>\n    <lastmod>{d.isoformat()}</lastmod>\n  </url>"
@@ -535,6 +693,7 @@ def aggregate_and_draft():
                     </div>
                     <h3>{html.escape(item['title'])}</h3>
                     <div class="history-badges">{history_badges}</div>
+                    {build_sale_note(stats, today_date)}
                 </div>
                 <div>
                     <div class="price-box">
@@ -622,6 +781,8 @@ def aggregate_and_draft():
         f"ガジェット・製品情報の新着ニュースを毎日自動集計。過去アーカイブも掲載中。"
     )
 
+    months = complete_months(csv_path, today)
+
     # 既存のアーカイブ＋今日ぶんを新しい順に並べる
     archive_dates = sorted(set(collect_archive_dates(docs_dir)) | {today}, reverse=True)
 
@@ -638,7 +799,7 @@ def aggregate_and_draft():
         date_label=f"{today_str} 更新",
         game_cards_html=games_joined,
         gadget_cards_html=gadgets_joined,
-        archive_html=build_archive_section(archive_dates, depth=0, current=today),
+        archive_html=build_monthly_links(months, depth=0) + build_archive_section(archive_dates, depth=0, current=today),
         depth=0,
         pick_html=pick_html,
         anime_cards_html=anime_joined,
@@ -652,7 +813,7 @@ def aggregate_and_draft():
         date_label=f"{today_str} 時点の記録",
         game_cards_html=games_joined,
         gadget_cards_html=gadgets_joined,
-        archive_html=build_archive_section(archive_dates, depth=3, current=today),
+        archive_html=build_monthly_links(months, depth=3) + build_archive_section(archive_dates, depth=3, current=today),
         depth=3,
         pick_html=pick_html,
         anime_cards_html=anime_joined,
@@ -1042,6 +1203,67 @@ section {
     border: 1px solid rgba(234, 179, 8, 0.25);
 }
 
+.badge-repeat {
+    background: rgba(168, 85, 247, 0.15);
+    color: #c084fc;
+    border: 1px solid rgba(168, 85, 247, 0.25);
+}
+
+.sale-history {
+    font-size: 0.85rem;
+    color: var(--text-secondary);
+    margin-bottom: 16px;
+}
+
+.table-wrap {
+    overflow-x: auto;
+}
+
+.ranking-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.95rem;
+}
+
+.ranking-table th,
+.ranking-table td {
+    padding: 12px 14px;
+    border-bottom: 1px solid var(--card-border);
+    text-align: left;
+}
+
+.ranking-table th {
+    color: var(--text-secondary);
+    font-weight: 600;
+    font-size: 0.85rem;
+}
+
+.ranking-table a {
+    color: var(--text-primary);
+    text-decoration: none;
+    font-weight: 600;
+}
+
+.ranking-table a:hover {
+    color: var(--accent-cyan);
+}
+
+.ranking-table .rank {
+    font-family: var(--font-display);
+    font-weight: 800;
+    font-size: 1.2rem;
+}
+
+.ranking-table .num {
+    white-space: nowrap;
+    font-variant-numeric: tabular-nums;
+}
+
+.ranking-table .of {
+    color: var(--text-secondary);
+    font-size: 0.8rem;
+}
+
 .pick-section {
     margin-bottom: 60px;
 }
@@ -1230,9 +1452,32 @@ footer {
         print("CSSビルド完了！")
 
         # sitemap.xml / robots.txt の出力
-        write_sitemap(docs_dir, archive_dates)
+        # 月間ランキング（終わった月ぶん。中身は確定しているので毎回作り直しても同じになる）
+        for y, m in months:
+            ranking = monthly_ranking(csv_path, y, m)
+            monthly_html = build_page(
+                title=f"{y}年{m}月 Steam売上上位の常連ゲームTOP{len(ranking)} - TrendHub",
+                description=(f"{y}年{m}月の1か月間、Steamの売上上位に掲載された日数が多かったゲームのランキング。"
+                             f"TrendHubが毎日記録したデータから集計しています。"),
+                canonical_url=f"{SITE_BASE_URL}/{monthly_rel_path(y, m)}",
+                heading=f"{y}年{m}月の常連ゲームランキング",
+                date_label=f"{y}年{m}月の集計",
+                game_cards_html="",
+                gadget_cards_html="",
+                archive_html="",
+                depth=3,
+                # about_html は本文の差し替え口として使う
+                about_html=build_monthly_content(y, m, ranking) + build_monthly_links(months, depth=3),
+            )
+            monthly_path = os.path.join(docs_dir, *monthly_rel_path(y, m).strip("/").split("/"), "index.html")
+            os.makedirs(os.path.dirname(monthly_path), exist_ok=True)
+            with open(monthly_path, mode='w', encoding='utf-8') as f:
+                f.write(monthly_html)
+        print(f"月間ランキング出力完了！（{len(months)} か月）")
+
+        write_sitemap(docs_dir, archive_dates, months)
         write_robots(docs_dir)
-        print(f"sitemap.xml / robots.txt 出力完了！（登録URL {len(archive_dates) + 2} 件）")
+        print(f"sitemap.xml / robots.txt 出力完了！（登録URL {len(archive_dates) + len(months) + 2} 件）")
 
     except Exception as e:
         print(f"Webサイトビルド中にエラーが発生しました: {e}")

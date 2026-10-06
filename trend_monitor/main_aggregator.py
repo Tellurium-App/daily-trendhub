@@ -173,6 +173,25 @@ def build_history_badges(stats: dict) -> str:
     return "".join(badges)
 
 
+def short_title(title: str, limit: int = 18) -> str:
+    """タイトル・説明文に入れるための短い作品名。商標記号とエディション名を落とす。"""
+    name = re.sub(r"[™®©]", "", title).split(" - ")[0].strip()
+    return name if len(name) <= limit else name[:limit] + "…"
+
+
+def daily_highlights(games: list, epic_free: list) -> list:
+    """その日のページを他の日と見分けるための目玉（最大割引のセールと、Epicの配布中タイトル）。"""
+    highlights = []
+    on_sale = [g for g in games if (g.get("discount_percent") or 0) > 0]
+    if on_sale:
+        top = max(on_sale, key=lambda g: g["discount_percent"])
+        highlights.append(f"{short_title(top['title'])} {top['discount_percent']}%OFF")
+    free_now = [g for g in epic_free if g["type"] == "free_epic"]
+    if free_now:
+        highlights.append(f"Epic無料 {short_title(free_now[0]['title'])}")
+    return highlights
+
+
 def build_sale_note(stats: dict, today: datetime.date) -> str:
     """前回のセールの終了日と割引率を1行で返します。2回目以降のセールの時だけ。"""
     prev = stats.get("prev_sale")
@@ -307,7 +326,7 @@ def build_monthly_content(y: int, m: int, ranking: list) -> str:
     return f"""
         <section class="monthly-section">
             <div class="section-title">
-                <h2><span>🏆</span> {y}年{m}月 Steam売上上位の常連ゲームTOP{len(ranking)}</h2>
+                <h2><span>🏆</span> {y}年{m}月 Steam人気ゲームランキングTOP{len(ranking)}</h2>
                 <p>Steamストアの売上上位一覧を毎日1回記録し、{y}年{m}月の{days_in_month}日間で掲載された日数が多い順に並べました。セール欄は、同じ月にセール一覧で確認できた最大の割引率です。</p>
             </div>
             <div class="table-wrap">
@@ -327,7 +346,7 @@ def build_monthly_links(months: list, depth: int) -> str:
         return ""
     prefix = "../" * depth
     items = "".join(
-        f'<li><a href="{prefix}{monthly_rel_path(y, m)}">{y}年{m}月の常連ゲームTOP{MONTHLY_TOP_N}</a></li>'
+        f'<li><a href="{prefix}{monthly_rel_path(y, m)}">{y}年{m}月 Steam人気ゲームランキング</a></li>'
         for y, m in months
     )
     return f"""
@@ -856,10 +875,27 @@ def aggregate_and_draft():
     anime_joined = "".join(anime_cards_html)
 
     today = datetime.date.today()
-    page_description = (
-        f"{today_str}時点のSteamセール・売上上位ゲーム、Epic Gamesの無料配布、放送中アニメの話題作、"
-        f"ガジェット・製品情報の新着ニュースを毎日自動集計。過去アーカイブも掲載中。"
-    )
+    # タイトルと説明文に、その日の中身（作品名）を入れる。日付以外が同じページが並ぶと、
+    # 似たページとしてインデックス登録から落とされやすいため。
+    highlights = daily_highlights(games[:6], epic_free)
+    md_label = f"{today.month}月{today.day}日"
+    # 検索結果に表示されるのは先頭120字ほどなので、件数で絞る（文字数で切ると作品名の途中で切れる）
+    top_sales = sorted((g for g in games[:6] if (g.get("discount_percent") or 0) > 0),
+                       key=lambda g: -g["discount_percent"])[:3]
+    sale_names = "、".join(f"{short_title(g['title'])}（{g['discount_percent']}%OFF）" for g in top_sales)
+    free_names = "、".join(short_title(g["title"]) for g in epic_free if g["type"] == "free_epic")
+    anime_names = "、".join(short_title(a["title"]) for a in anime[:2])
+    desc_parts = [f"{today_str}時点の記録。"]
+    if sale_names:
+        desc_parts.append(f"Steamセール：{sale_names}。")
+    if free_names:
+        desc_parts.append(f"Epic無料配布：{free_names}。")
+    if anime_names:
+        desc_parts.append(f"話題のアニメ：{anime_names}。")
+    desc_parts.append("Steamセール・無料ゲーム・アニメ・ガジェット情報を毎日自動集計しています。")
+    page_description = "".join(desc_parts)
+    daily_title = (f"{md_label}のSteamセール・無料ゲーム：{' / '.join(highlights)} ほか - TrendHub"
+                   if highlights else f"{md_label}のSteamセール・無料ゲームまとめ - TrendHub")
 
     months = complete_months(csv_path, today)
 
@@ -872,7 +908,7 @@ def aggregate_and_draft():
         print(f"今日の一本: {pick['title']} / {pick_reason}")
 
     top_html = build_page(
-        title=f"TrendHub - ゲーム・アニメ・ガジェットトレンド自動集計速報 ({today_str})",
+        title=f"TrendHub｜Steamセール・無料ゲーム・話題のアニメを毎日まとめ（{md_label}更新）",
         description=page_description,
         canonical_url=f"{SITE_BASE_URL}/",
         heading="TrendHub - ゲーム・アニメ・ガジェット速報",
@@ -887,10 +923,10 @@ def aggregate_and_draft():
     )
 
     archive_page_html = build_page(
-        title=f"TrendHub - ゲーム・アニメ・ガジェットトレンド速報 ({today_str} 時点の記録)",
+        title=daily_title,
         description=page_description,
         canonical_url=f"{SITE_BASE_URL}/{archive_rel_path(today)}",
-        heading=f"TrendHub - {today_str} 時点のトレンド記録",
+        heading=f"{today_str}のSteamセール・無料ゲームまとめ",
         date_label=f"{today_str} 時点の記録",
         game_cards_html=games_joined,
         gadget_cards_html=gadgets_joined,
@@ -1561,11 +1597,12 @@ footer {
         for y, m in months:
             ranking = monthly_ranking(csv_path, y, m)
             monthly_html = build_page(
-                title=f"{y}年{m}月 Steam売上上位の常連ゲームTOP{len(ranking)} - TrendHub",
-                description=(f"{y}年{m}月の1か月間、Steamの売上上位に掲載された日数が多かったゲームのランキング。"
+                title=f"{y}年{m}月 Steam人気ゲームランキングTOP{len(ranking)}（売上上位の掲載日数順） - TrendHub",
+                description=(f"{y}年{m}月のSteam人気ゲームランキング。1位は{ranking[0]['title']}"
+                             f"（{ranking[0]['days']}日掲載）。1か月間、売上上位に掲載された日数が多かったゲームを集計。"
                              f"TrendHubが毎日記録したデータから集計しています。"),
                 canonical_url=f"{SITE_BASE_URL}/{monthly_rel_path(y, m)}",
-                heading=f"{y}年{m}月の常連ゲームランキング",
+                heading=f"{y}年{m}月 Steam人気ゲームランキング",
                 date_label=f"{y}年{m}月の集計",
                 game_cards_html="",
                 gadget_cards_html="",

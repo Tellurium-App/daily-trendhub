@@ -201,6 +201,14 @@ def daily_highlights(games: list, epic_free: list) -> list:
     return highlights
 
 
+def card_image(item: dict, css_class: str = "card-img") -> str:
+    """カード上端の画像。画像は取得元のサーバーから直接表示し、こちらには保存しない。"""
+    if not item.get("image"):
+        return ""
+    return (f'<img class="{css_class}" src="{html.escape(item["image"], quote=True)}" '
+            f'alt="{html.escape(item["title"], quote=True)}" loading="lazy" decoding="async">')
+
+
 def build_sale_note(stats: dict, today: datetime.date) -> str:
     """前回のセールの終了日と割引率を1行で返します。2回目以降のセールの時だけ。"""
     prev = stats.get("prev_sale")
@@ -249,6 +257,7 @@ def build_pick_section(pick: dict, reason: str) -> str:
                 <h2><span>📌</span> 本日のピックアップ</h2>
             </div>
             <div class="pick-card">
+                {card_image(pick, "pick-img")}
                 <h3>{html.escape(pick['title'])}</h3>
                 <p class="pick-reason">{html.escape(reason)}</p>
                 <div class="pick-price">{price:.0f}円</div>
@@ -723,6 +732,7 @@ def aggregate_and_draft():
                 
             card_html = f"""
             <div class="card">
+                {card_image(item)}
                 <div>
                     <div class="card-header">
                         <span class="badge {badge_class}">{badge_text}</span>
@@ -754,6 +764,7 @@ def aggregate_and_draft():
         orig_html = f'<span class="price-original">{item["original_price"]:,}円</span>' if item["original_price"] else ""
         epic_cards.append(f"""
             <div class="card">
+                {card_image(item)}
                 <div>
                     <div class="card-header">
                         <span class="badge {'badge-free' if is_now else 'badge-next'}">{'FREE 配布中' if is_now else 'NEXT 予告'}</span>
@@ -770,7 +781,7 @@ def aggregate_and_draft():
                         </div>
                     </div>
                     <div class="btn-container">
-                        <a href="{html.escape(item['url'], quote=True)}" target="_blank" class="btn btn-primary">Epic Gamesで受け取る</a>
+                        <a href="{html.escape(item['url'], quote=True)}" target="_blank" class="btn btn-primary">{'Epic Gamesで受け取る' if is_now else 'Epic Gamesで見る'}</a>
                     </div>
                 </div>
             </div>
@@ -781,6 +792,7 @@ def aggregate_and_draft():
         history_badges = build_history_badges(item_stats(item, free_history, today_date))
         steam_free_cards.append(f"""
             <div class="card">
+                {card_image(item)}
                 <div>
                     <div class="card-header">
                         <span class="badge badge-free">基本プレイ無料</span>
@@ -828,6 +840,7 @@ def aggregate_and_draft():
             history_badges = build_history_badges(item_stats(item, anime_history, today_date))
             card_html = f"""
             <div class="card">
+                {card_image(item)}
                 <div>
                     <div class="card-header">
                         <span class="badge badge-anime">TRENDING</span>
@@ -1121,6 +1134,30 @@ section {
     position: relative;
     overflow: hidden;
     backdrop-filter: blur(12px);
+}
+
+.card-img {
+    display: block;
+    width: calc(100% + 60px);
+    margin: -30px -30px 20px;
+    aspect-ratio: 460 / 215;
+    object-fit: cover;
+    background: rgba(255, 255, 255, 0.04);
+}
+
+.anime-section .card-img {
+    /* AniList のキービジュアルは縦長なので、顔が入りやすい上寄りで切り出す */
+    object-position: center 25%;
+}
+
+.pick-img {
+    display: block;
+    width: 100%;
+    max-width: 460px;
+    aspect-ratio: 460 / 215;
+    object-fit: cover;
+    border-radius: 10px;
+    margin-bottom: 16px;
 }
 
 .card::before {

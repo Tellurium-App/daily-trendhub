@@ -12,6 +12,7 @@ QUERY = """
     media(type: ANIME, sort: TRENDING_DESC, status: RELEASING, countryOfOrigin: "JP", isAdult: false) {
       id
       siteUrl
+      coverImage { extraLarge }
       title { native romaji }
       nextAiringEpisode { episode }
       averageScore
@@ -64,6 +65,7 @@ def get_anime_trends() -> List[Dict[str, Any]]:
             "id": f"anilist-{m['id']}",
             "title": title,
             "url": m["siteUrl"],
+            "image": (m.get("coverImage") or {}).get("extraLarge", ""),
             "type": "anime_trending",
             "headline": "【放送中アニメ 話題作】",
             "price_info": "",

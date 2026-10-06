@@ -39,6 +39,7 @@ def get_steam_trends() -> List[Dict[str, Any]]:
                     "final_price": final_price,
                     "currency": item.get("currency", "JPY"),
                     "url": f"https://store.steampowered.com/app/{item.get('id')}/",
+                    "image": item.get("header_image", ""),
                     "type": "game_sale",
                     "headline": f"【Steamセール中! {item.get('discount_percent')}%OFF】"
                 })
@@ -64,6 +65,7 @@ def get_steam_trends() -> List[Dict[str, Any]]:
                     "final_price": final_price,
                     "currency": item.get("currency", "JPY"),
                     "url": f"https://store.steampowered.com/app/{item.get('id')}/",
+                    "image": item.get("header_image", ""),
                     "type": "game_top_seller",
                     "headline": "【Steam売上上位！】"
                 })
@@ -73,6 +75,19 @@ def get_steam_trends() -> List[Dict[str, Any]]:
     except Exception as e:
         print(f"Steam APIの取得中にエラーが発生しました: {e}")
         return []
+
+def get_header_image(app_id: str) -> str:
+    """ストアのヘッダー画像URLを返します。新しめのアプリはURLにハッシュが入り、IDだけでは組み立てられない。"""
+    url = f"https://store.steampowered.com/api/appdetails?appids={app_id}&filters=basic"
+    req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'})
+    try:
+        with urllib.request.urlopen(req, timeout=15) as response:
+            data = json.loads(response.read().decode('utf-8')).get(app_id, {})
+        return (data.get("data") or {}).get("header_image", "")
+    except Exception as e:
+        print(f"Steamの画像取得中にエラーが発生しました（{app_id}）: {e}")
+        return ""
+
 
 def get_steam_free_trends(limit: int = 10) -> List[Dict[str, Any]]:
     """Steamの基本プレイ無料ゲームを、売上順（課金を含む）で取得します。
@@ -99,6 +114,7 @@ def get_steam_free_trends(limit: int = 10) -> List[Dict[str, Any]]:
             "id": m.group(1),
             "title": item.get("name", "").strip(),
             "url": f"https://store.steampowered.com/app/{m.group(1)}/",
+            "image": get_header_image(m.group(1)),
             "type": "free_steam",
             "headline": "【Steam 基本プレイ無料】",
             "price_info": "基本プレイ無料",

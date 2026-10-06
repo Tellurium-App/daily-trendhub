@@ -55,8 +55,12 @@ def get_epic_free_games() -> List[Dict[str, Any]]:
             kind, headline = "free_epic_next", "【Epic Games 次回の無料配布】"
             period = f"{start.month}月{start.day}日 {start:%H:%M} から"
 
+        images = {img["type"]: img["url"] for img in el.get("keyImages", [])}
+        image = images.get("OfferImageWide") or images.get("Thumbnail") or images.get("OgImage") or ""
+
         games.append({
             "id": f"epic-{el['id']}",
+            "image": image,
             "title": el["title"],
             "url": f"https://store.epicgames.com/ja/p/{slug}" if slug else "https://store.epicgames.com/ja/free-games",
             "type": kind,

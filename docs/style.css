@@ -168,6 +168,30 @@ section {
     backdrop-filter: blur(12px);
 }
 
+.card-img {
+    display: block;
+    width: calc(100% + 60px);
+    margin: -30px -30px 20px;
+    aspect-ratio: 460 / 215;
+    object-fit: cover;
+    background: rgba(255, 255, 255, 0.04);
+}
+
+.anime-section .card-img {
+    /* AniList のキービジュアルは縦長なので、顔が入りやすい上寄りで切り出す */
+    object-position: center 25%;
+}
+
+.pick-img {
+    display: block;
+    width: 100%;
+    max-width: 460px;
+    aspect-ratio: 460 / 215;
+    object-fit: cover;
+    border-radius: 10px;
+    margin-bottom: 16px;
+}
+
 .card::before {
     content: '';
     position: absolute;

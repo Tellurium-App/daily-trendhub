@@ -1,4 +1,5 @@
 import json
+import re
 import urllib.request
 import urllib.parse
 from typing import List, Dict, Any
@@ -72,6 +73,39 @@ def get_steam_trends() -> List[Dict[str, Any]]:
     except Exception as e:
         print(f"Steam APIの取得中にエラーが発生しました: {e}")
         return []
+
+def get_steam_free_trends(limit: int = 10) -> List[Dict[str, Any]]:
+    """Steamの基本プレイ無料ゲームを、売上順（課金を含む）で取得します。
+
+    公式APIには無料ゲームの一覧が無いので、ストアの検索画面が使っているURLを読む。
+    結果にアプリIDが無いため、画像URLの /apps/<ID>/ から取り出す。
+    """
+    url = ("https://store.steampowered.com/search/results/"
+           f"?filter=topsellers&maxprice=free&cc=jp&l=japanese&json=1&count={limit}")
+    req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'})
+    try:
+        with urllib.request.urlopen(req, timeout=15) as response:
+            items = json.loads(response.read().decode('utf-8')).get("items", [])
+    except Exception as e:
+        print(f"Steamの無料ゲーム取得中にエラーが発生しました: {e}")
+        return []
+
+    trends = []
+    for item in items:
+        m = re.search(r"/apps/(\d+)/", item.get("logo", ""))
+        if not m:
+            continue
+        trends.append({
+            "id": m.group(1),
+            "title": item.get("name", "").strip(),
+            "url": f"https://store.steampowered.com/app/{m.group(1)}/",
+            "type": "free_steam",
+            "headline": "【Steam 基本プレイ無料】",
+            "price_info": "基本プレイ無料",
+            "source": "Steam Store",
+        })
+    return trends
+
 
 if __name__ == "__main__":
     print("Steamのトレンド情報を取得中...")

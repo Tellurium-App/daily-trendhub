@@ -11,7 +11,8 @@ import urllib.parse
 # パスを追加して同一ディレクトリ内のモジュールを確実にインポートできるようにする
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
-from steam_monitor import get_steam_trends
+from steam_monitor import get_steam_trends, get_steam_free_trends
+from epic_monitor import get_epic_free_games
 from gadget_monitor import get_gadget_trends
 from anime_monitor import get_anime_trends
 
@@ -388,7 +389,8 @@ def build_archive_section(dates: list, depth: int, current: datetime.date = None
 def build_page(title: str, description: str, canonical_url: str, heading: str,
                date_label: str, game_cards_html: str, gadget_cards_html: str,
                archive_html: str, depth: int, pick_html: str = "",
-               about_html: str = "", anime_cards_html: str = "") -> str:
+               about_html: str = "", anime_cards_html: str = "",
+               free_html: str = "") -> str:
     """1ページ分のHTMLを組み立てます。depth はサイトルートからの階層の深さ。"""
     prefix = "../" * depth
     esc_title = html.escape(title)
@@ -417,7 +419,7 @@ def build_page(title: str, description: str, canonical_url: str, heading: str,
                 {game_cards_html}
             </div>
         </section>
-
+{free_html}
         <section class="anime-section">
             <div class="section-title">
                 <h2><span>📺</span> 放送中アニメの話題作</h2>
@@ -467,7 +469,7 @@ def build_page(title: str, description: str, canonical_url: str, heading: str,
             <div class="logo"><a href="{prefix}">TrendHub</a></div>
             <div class="date-badge">{date_label}</div>
             <h1>{html.escape(heading)}</h1>
-            <p class="subtitle">Steamのセール・売上上位ゲーム、放送中アニメの話題作、ガジェット系メディアの新着ニュースを毎日自動集計してお届けする情報サイトです。</p>
+            <p class="subtitle">Steamのセール・売上上位ゲーム、Epic Gamesの無料配布と基本プレイ無料の人気作、放送中アニメの話題作、ガジェット系メディアの新着ニュースを毎日自動集計してお届けする情報サイトです。</p>
         </div>
     </header>
 {notice_html}
@@ -544,10 +546,12 @@ def aggregate_and_draft():
     
     print("データ収集中...")
     games = get_steam_trends()
+    epic_free = get_epic_free_games()
+    steam_free = get_steam_free_trends()
     anime = get_anime_trends()
     gadgets = get_gadget_trends()
 
-    all_items = games + anime + gadgets
+    all_items = games + epic_free + steam_free + anime + gadgets
     now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     
     # 1. CSVへの保存（Excelの文字化けを防ぐため utf-8-sig を使用）
@@ -656,6 +660,7 @@ def aggregate_and_draft():
     today_date = datetime.date.today()
     history = load_history(csv_path, "game")
     anime_history = load_history(csv_path, "anime")
+    free_history = load_history(csv_path, "free_steam")
     print(f"掲載履歴を読み込み: ゲーム {len(history)} / アニメ {len(anime_history)} タイトル")
 
     # ゲームのカードHTML構築
@@ -708,6 +713,81 @@ def aggregate_and_draft():
             game_cards_html.append(card_html)
     else:
         game_cards_html.append("<p class='no-data'>現在、対象のゲーム情報はありません。</p>")
+
+    # 無料ゲームのカードHTML構築
+    epic_cards = []
+    for item in epic_free:
+        is_now = item["type"] == "free_epic"
+        # Actions は Python 3.11 なので、f文字列の中に同じ引用符の f文字列を入れ子にしない
+        orig_html = f'<span class="price-original">{item["original_price"]:,}円</span>' if item["original_price"] else ""
+        epic_cards.append(f"""
+            <div class="card">
+                <div>
+                    <div class="card-header">
+                        <span class="badge {'badge-free' if is_now else 'badge-next'}">{'FREE 配布中' if is_now else 'NEXT 予告'}</span>
+                        <span class="source">Epic Games</span>
+                    </div>
+                    <h3>{html.escape(item['title'])}</h3>
+                    <p class="free-period">{html.escape(item['period'])}</p>
+                </div>
+                <div>
+                    <div class="price-box">
+                        <div class="price-sale-container">
+                            {orig_html}
+                            <span class="price-current">{'0円' if is_now else '無料予定'}</span>
+                        </div>
+                    </div>
+                    <div class="btn-container">
+                        <a href="{html.escape(item['url'], quote=True)}" target="_blank" class="btn btn-primary">Epic Gamesで受け取る</a>
+                    </div>
+                </div>
+            </div>
+            """)
+
+    steam_free_cards = []
+    for item in steam_free[:6]:
+        history_badges = build_history_badges(item_stats(item, free_history, today_date))
+        steam_free_cards.append(f"""
+            <div class="card">
+                <div>
+                    <div class="card-header">
+                        <span class="badge badge-free">基本プレイ無料</span>
+                        <span class="source">Steam Store</span>
+                    </div>
+                    <h3>{html.escape(item['title'])}</h3>
+                    <div class="history-badges">{history_badges}</div>
+                </div>
+                <div>
+                    <div class="btn-container">
+                        <a href="{html.escape(item['url'], quote=True)}" target="_blank" class="btn btn-secondary">Steamで詳細を見る</a>
+                    </div>
+                </div>
+            </div>
+            """)
+
+    epic_joined = "".join(epic_cards) or "<p class='no-data'>現在、無料配布の情報はありません。</p>"
+    steam_free_joined = "".join(steam_free_cards) or "<p class='no-data'>現在、対象のゲーム情報はありません。</p>"
+    free_html = f"""
+        <section class="free-section">
+            <div class="section-title">
+                <h2><span>🎁</span> Epic Games 無料配布</h2>
+                <p>Epic Games ストアで期間限定で無料配布中のゲームと、次回の配布予定です。期間内に受け取れば、その後もずっと遊べます。</p>
+            </div>
+            <div class="grid">
+                {epic_joined}
+            </div>
+        </section>
+
+        <section class="free-section">
+            <div class="section-title">
+                <h2><span>🆓</span> Steam 基本プレイ無料の人気ゲーム</h2>
+                <p>Steamの基本プレイ無料ゲームを、売上順（ゲーム内課金を含む）に並べています。</p>
+            </div>
+            <div class="grid">
+                {steam_free_joined}
+            </div>
+        </section>
+"""
 
     # アニメのカードHTML構築（価格は無いので、履歴バッジと作品情報だけ出す）
     anime_cards_html = []
@@ -777,7 +857,7 @@ def aggregate_and_draft():
 
     today = datetime.date.today()
     page_description = (
-        f"{today_str}時点のSteamセール・売上上位ゲーム、放送中アニメの話題作、"
+        f"{today_str}時点のSteamセール・売上上位ゲーム、Epic Gamesの無料配布、放送中アニメの話題作、"
         f"ガジェット・製品情報の新着ニュースを毎日自動集計。過去アーカイブも掲載中。"
     )
 
@@ -803,6 +883,7 @@ def aggregate_and_draft():
         depth=0,
         pick_html=pick_html,
         anime_cards_html=anime_joined,
+        free_html=free_html,
     )
 
     archive_page_html = build_page(
@@ -817,6 +898,7 @@ def aggregate_and_draft():
         depth=3,
         pick_html=pick_html,
         anime_cards_html=anime_joined,
+        free_html=free_html,
     )
 
     archive_path = os.path.join(docs_dir, *archive_rel_path(today).strip("/").split("/"), "index.html")
@@ -1012,6 +1094,10 @@ section {
     box-shadow: 0 20px 40px rgba(168, 85, 247, 0.08);
 }
 
+.free-section .card:hover {
+    box-shadow: 0 20px 40px rgba(34, 197, 94, 0.08);
+}
+
 .anime-section .card:hover {
     box-shadow: 0 20px 40px rgba(236, 72, 153, 0.08);
 }
@@ -1052,6 +1138,24 @@ section {
     background: rgba(6, 182, 212, 0.15);
     color: var(--accent-cyan);
     border: 1px solid rgba(6, 182, 212, 0.2);
+}
+
+.badge-free {
+    background: rgba(34, 197, 94, 0.15);
+    color: #4ade80;
+    border: 1px solid rgba(34, 197, 94, 0.25);
+}
+
+.badge-next {
+    background: rgba(255, 255, 255, 0.06);
+    color: var(--text-secondary);
+    border: 1px solid var(--card-border);
+}
+
+.free-period {
+    font-size: 0.9rem;
+    color: var(--text-secondary);
+    margin-bottom: 16px;
 }
 
 .badge-anime {
@@ -1400,7 +1504,7 @@ footer {
             <div class="about-card" style="background: var(--card-bg); border: 1px solid var(--card-border); border-radius: 20px; padding: 40px; backdrop-filter: blur(12px); color: var(--text-primary); line-height: 1.8;">
                 <h3 style="font-size: 1.4rem; font-weight: 700; margin-bottom: 15px; color: #ffffff; border-bottom: 1px solid var(--card-border); padding-bottom: 8px;">概要</h3>
                 <p style="margin-bottom: 24px;">
-                    当サイト「TrendHub」は、PCゲーム配信プラットフォーム「Steam」で現在セール中、または売上上位にランクインしているゲーム情報、アニメデータベース「AniList」で話題になっている放送中アニメ、主要ガジェットメディア（Gizmodo Japan、PC Watch）の新着ニュース記事を毎日自動で集計し、一覧形式でご紹介する速報・まとめサイトです。
+                    当サイト「TrendHub」は、PCゲーム配信プラットフォーム「Steam」で現在セール中、または売上上位にランクインしているゲーム情報、Epic Games ストアの無料配布、Steamの基本プレイ無料ゲーム、アニメデータベース「AniList」で話題になっている放送中アニメ、主要ガジェットメディア（Gizmodo Japan、PC Watch）の新着ニュース記事を毎日自動で集計し、一覧形式でご紹介する速報・まとめサイトです。
                 </p>
 
                 <h3 style="font-size: 1.4rem; font-weight: 700; margin-bottom: 15px; color: #ffffff; border-bottom: 1px solid var(--card-border); padding-bottom: 8px;">データの取得・更新頻度</h3>
@@ -1409,6 +1513,7 @@ footer {
                 </p>
                 <ul style="margin-bottom: 24px; padding-left: 20px; list-style-type: disc;">
                     <li><strong>ゲーム情報：</strong>Steamストア（セール情報・売上上位ゲームデータ）</li>
+                    <li><strong>無料ゲーム情報：</strong>Epic Games ストア（無料配布中・配布予定）、Steamストア（基本プレイ無料ゲームの売上順）</li>
                     <li><strong>アニメ情報：</strong>AniList（放送中の日本制作アニメを、利用者の直近の反応にもとづく話題度順に取得）</li>
                     <li><strong>ガジェット・テック情報：</strong>Gizmodo Japan、PC Watch のRSSフィード</li>
                 </ul>

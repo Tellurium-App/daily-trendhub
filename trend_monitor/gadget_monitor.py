@@ -83,7 +83,8 @@ def get_gadget_trends() -> List[Dict[str, Any]]:
                     link_text = link.text if link is not None else ""
                     desc_text = desc.text if desc is not None else ""
                     
-                    items.append((title_text, link_text, desc_text))
+                    # 要素はあっても中身が空だと .text が None になる。1件でも混ざるとフィードごと落ちていた
+                    items.append((title_text or "", link_text or "", desc_text or ""))
                 
                 # 2. RDF 1.0 (PC Watchなど) のパース
                 ns = {
@@ -99,7 +100,8 @@ def get_gadget_trends() -> List[Dict[str, Any]]:
                     link_text = link.text if link is not None else ""
                     desc_text = desc.text if desc is not None else ""
                     
-                    items.append((title_text, link_text, desc_text))
+                    # 要素はあっても中身が空だと .text が None になる。1件でも混ざるとフィードごと落ちていた
+                    items.append((title_text or "", link_text or "", desc_text or ""))
                 
                 # 重複排除しながらフィルタリングと整形
                 seen_urls = set()

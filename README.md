@@ -1,6 +1,6 @@
 # TrendHub
 
-**https://tellurium-app.github.io/daily-trendhub/**
+**https://daily-trendhub.com/**
 
 Steamのセール・売上上位ゲーム、Epic Gamesの無料配布、Steamの基本プレイ無料ゲーム、放送中アニメの話題作、ガジェット系ニュースを毎日自動で集計して公開している情報サイトです。
 

@@ -89,6 +89,30 @@ header::after {
     -webkit-text-fill-color: inherit;
 }
 
+.genre-nav {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 8px;
+    margin-bottom: 14px;
+}
+
+.genre-nav a {
+    color: var(--text-secondary);
+    text-decoration: none;
+    font-size: 0.9rem;
+    font-weight: 600;
+    padding: 4px 12px;
+    border-radius: 9999px;
+    border: 1px solid var(--card-border);
+}
+
+.genre-nav a:hover,
+.genre-nav a[aria-current="page"] {
+    color: var(--text-primary);
+    border-color: var(--accent-cyan);
+}
+
 .date-badge {
     background: rgba(255, 255, 255, 0.05);
     border: 1px solid rgba(255, 255, 255, 0.1);

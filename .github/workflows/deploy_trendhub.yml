@@ -40,3 +40,8 @@ jobs:
           else
             echo "No changes to commit."
           fi
+
+      - name: Notify IndexNow (Bing)
+        # 通知が失敗しても公開は済んでいるので、ジョブは落とさない
+        continue-on-error: true
+        run: python trend_monitor/indexnow.py

@@ -34,7 +34,7 @@ ANALYTICS_NOTICE_HTML = """                <h3 style="font-size: 1.4rem; font-we
 # 独自ドメインを取得したら SITE_BASE_URL を差し替えるだけで
 # canonical / OGP / sitemap の URL が一斉に切り替わる。
 SITE_BASE_URL = os.environ.get(
-    "SITE_BASE_URL", "https://tellurium-app.github.io/daily-trendhub"
+    "SITE_BASE_URL", "https://daily-trendhub.com"
 ).rstrip("/")
 
 # 一覧に載せるアーカイブの最大件数
@@ -559,10 +559,9 @@ def write_sitemap(docs_dir: str, dates: list, months: list = ()) -> None:
 def write_robots(docs_dir: str) -> None:
     """robots.txt を出力します。
 
-    NOTE: GitHub Pages のプロジェクトサイト（*.github.io/daily-trendhub/）では
-    robots.txt はドメイン直下しか読まれないため、このファイルが効くのは
-    独自ドメインを割り当ててから。それまでは Search Console から
-    sitemap.xml を直接送信すること。
+    NOTE: robots.txt はドメイン直下しか読まれない。*.github.io/daily-trendhub/ の頃は
+    効かず、Google は2ヶ月で sitemap を一度も読まなかった（2026-10-28 に 85 URL 中
+    登録5件）。独自ドメイン daily-trendhub.com に移してから効くようになった。
     """
     content = (
         "User-agent: *\n"

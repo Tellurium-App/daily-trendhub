@@ -39,7 +39,7 @@ def get_anime_trends() -> List[Dict[str, Any]]:
         ANILIST_API, data=body,
         # Python 既定の User-Agent だと 403 で弾かれるので名乗る
         headers={"Content-Type": "application/json", "Accept": "application/json",
-                 "User-Agent": "TrendHub/1.0 (+https://tellurium-app.github.io/daily-trendhub/)"},
+                 "User-Agent": "TrendHub/1.0 (+https://daily-trendhub.com/)"},
     )
     trends = []
     try:

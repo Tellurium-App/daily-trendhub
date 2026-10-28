@@ -55,6 +55,16 @@ SALE_GAP_DAYS = 10
 # 月間ランキングの掲載件数
 MONTHLY_TOP_N = 10
 
+# ジャンル別ページ（URL は固定で、毎日中身を入れ替える）。(キー, パス, ナビの表示名)
+# 日別ページは数日で古くなるが、固定 URL なら「今セール中のもの」を探す検索に同じページで応えられ、
+# Search Console でもパスの先頭（/game/ /anime/ など）ごとに数字を分けて見られる。
+GENRE_PAGES = [
+    ("steam", "game/steam/", "Steamセール"),
+    ("free", "game/free/", "無料ゲーム"),
+    ("anime", "anime/", "アニメ"),
+    ("gadget", "gadget/", "ガジェット"),
+]
+
 # 景表法（ステマ規制）が求める広告表示と、Amazonアソシエイト運営規約が求める表示。
 # 文言は改定されうるので、申請前にアソシエイト・セントラルで最新版を確認すること。
 AFFILIATE_NOTICE = "本ページはプロモーションを含みます。商品リンクの一部はアフィリエイトリンクです。"
@@ -427,8 +437,11 @@ def build_page(title: str, description: str, canonical_url: str, heading: str,
                date_label: str, game_cards_html: str, gadget_cards_html: str,
                archive_html: str, depth: int, pick_html: str = "",
                about_html: str = "", anime_cards_html: str = "",
-               free_html: str = "") -> str:
-    """1ページ分のHTMLを組み立てます。depth はサイトルートからの階層の深さ。"""
+               free_html: str = "", only: str = "") -> str:
+    """1ページ分のHTMLを組み立てます。depth はサイトルートからの階層の深さ。
+
+    only に GENRE_PAGES のキーを渡すと、そのジャンルの節だけを出す（ジャンル別ページ用）。
+    """
     prefix = "../" * depth
     esc_title = html.escape(title)
     esc_desc = html.escape(description)
@@ -449,10 +462,8 @@ def build_page(title: str, description: str, canonical_url: str, heading: str,
         if CF_ANALYTICS_TOKEN else ""
     )
 
-    if about_html:
-        main_content = about_html
-    else:
-        main_content = f"""{pick_html}
+    sections = {}
+    sections["steam"] = f"""
         <section class="game-section">
             <div class="section-title">
                 <h2><span>🎮</span> Steamゲームトレンド</h2>
@@ -462,7 +473,9 @@ def build_page(title: str, description: str, canonical_url: str, heading: str,
                 {game_cards_html}
             </div>
         </section>
-{free_html}
+"""
+    sections["free"] = free_html
+    sections["anime"] = f"""
         <section class="anime-section">
             <div class="section-title">
                 <h2><span>📺</span> 放送中アニメの話題作</h2>
@@ -472,7 +485,8 @@ def build_page(title: str, description: str, canonical_url: str, heading: str,
                 {anime_cards_html}
             </div>
         </section>
-
+"""
+    sections["gadget"] = f"""
         <section class="gadget-section">
             <div class="section-title">
                 <h2><span>🔌</span> 最新ガジェットトレンド</h2>
@@ -482,7 +496,20 @@ def build_page(title: str, description: str, canonical_url: str, heading: str,
                 {gadget_cards_html}
             </div>
         </section>
-{archive_html}"""
+"""
+    if about_html:
+        main_content = about_html
+    elif only:
+        main_content = (pick_html if only == "steam" else "") + sections[only] + archive_html
+    else:
+        main_content = pick_html + "".join(sections[k] for k, _, _ in GENRE_PAGES) + archive_html
+
+    # Actions は Python 3.11 なので、f-string の式の中にバックスラッシュを書かない
+    current_attr = ' aria-current="page"'
+    nav_html = "".join(
+        f'<a href="{prefix}{path}"{current_attr if key == only else ""}>{html.escape(label)}</a>'
+        for key, path, label in GENRE_PAGES
+    )
 
     return f"""<!DOCTYPE html>
 <html lang="ja">
@@ -507,6 +534,7 @@ def build_page(title: str, description: str, canonical_url: str, heading: str,
     <header>
         <div class="container header-container">
             <div class="logo"><a href="{prefix}">TrendHub</a></div>
+            <nav class="genre-nav">{nav_html}</nav>
             <div class="date-badge">{date_label}</div>
             <h1>{html.escape(heading)}</h1>
             <p class="subtitle">Steamのセール・売上上位ゲーム、Epic Gamesの無料配布と基本プレイ無料の人気作、放送中アニメの話題作、ガジェット系メディアの新着ニュースを毎日自動集計してお届けする情報サイトです。</p>
@@ -532,12 +560,13 @@ def build_page(title: str, description: str, canonical_url: str, heading: str,
 
 
 def write_sitemap(docs_dir: str, dates: list, months: list = ()) -> None:
-    """トップ、Aboutページ、全アーカイブ、月間ランキングを載せた sitemap.xml を出力します。"""
+    """トップ、Aboutページ、ジャンル別、全アーカイブ、月間ランキングを載せた sitemap.xml を出力します。"""
     today = datetime.date.today()
     entries = [
         (f"{SITE_BASE_URL}/", today),
         (f"{SITE_BASE_URL}/about/", today)
     ]
+    entries += [(f"{SITE_BASE_URL}/{path}", today) for _, path, _ in GENRE_PAGES]
     entries += [(f"{SITE_BASE_URL}/{archive_rel_path(d)}", d) for d in dates]
     # 月間ページの中身は月末で確定するので、lastmod は月末日にする
     entries += [(f"{SITE_BASE_URL}/{monthly_rel_path(y, m)}", month_last_day(y, m)) for y, m in months]
@@ -966,6 +995,47 @@ def aggregate_and_draft():
 
     archive_path = os.path.join(docs_dir, *archive_rel_path(today).strip("/").split("/"), "index.html")
 
+    # ジャンル別ページ（固定 URL・毎日上書き）。(タイトル, 説明文, 見出し)
+    genre_meta = {
+        "steam": (f"Steamセール中・人気ゲーム一覧（{md_label}更新） - TrendHub",
+                  f"{today_str}時点でSteamのセール中・売上上位のゲーム。"
+                  + (f"{sale_names}。" if sale_names else "")
+                  + "セールが記録上何回目か、前回のセールはいつかも表示。毎日更新。",
+                  "Steamセール中・人気ゲーム一覧"),
+        "free": (f"今もらえる無料ゲーム：Epic無料配布とSteam基本無料（{md_label}更新） - TrendHub",
+                 f"{today_str}時点の無料ゲーム。"
+                 + (f"Epic無料配布：{free_names}。" if free_names else "")
+                 + "Epic Gamesの無料配布（次回予定つき）とSteamの基本プレイ無料の人気作を毎日更新。",
+                 "今もらえる無料ゲーム"),
+        "anime": (f"放送中アニメの話題作（{md_label}更新） - TrendHub",
+                  f"{today_str}時点で話題の放送中アニメ。"
+                  + (f"{anime_names}など。" if anime_names else "")
+                  + "AniListの話題度をもとに毎日更新。",
+                  "放送中アニメの話題作"),
+        "gadget": (f"ガジェット新着ニュースまとめ（{md_label}更新） - TrendHub",
+                   f"{today_str}時点のガジェット・テック系メディアの新着ニュースを毎日まとめています。",
+                   "ガジェット新着ニュース"),
+    }
+    genre_pages = []
+    for key, path, _ in GENRE_PAGES:
+        title, desc, heading = genre_meta[key]
+        depth = path.strip("/").count("/") + 1
+        genre_pages.append((path, build_page(
+            title=title,
+            description=desc,
+            canonical_url=f"{SITE_BASE_URL}/{path}",
+            heading=heading,
+            date_label=f"{today_str} 更新",
+            game_cards_html=games_joined,
+            gadget_cards_html=gadgets_joined,
+            archive_html=build_monthly_links(months, depth=depth) if key == "steam" else "",
+            depth=depth,
+            pick_html=pick_html,
+            anime_cards_html=anime_joined,
+            free_html=free_html,
+            only=key,
+        )))
+
     # CSSテンプレート
     css_template = """:root {
     --bg-dark: #0f111a;
@@ -1056,6 +1126,30 @@ header::after {
     color: inherit;
     text-decoration: none;
     -webkit-text-fill-color: inherit;
+}
+
+.genre-nav {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 8px;
+    margin-bottom: 14px;
+}
+
+.genre-nav a {
+    color: var(--text-secondary);
+    text-decoration: none;
+    font-size: 0.9rem;
+    font-weight: 600;
+    padding: 4px 12px;
+    border-radius: 9999px;
+    border: 1px solid var(--card-border);
+}
+
+.genre-nav a:hover,
+.genre-nav a[aria-current="page"] {
+    color: var(--text-primary);
+    border-color: var(--accent-cyan);
 }
 
 .date-badge {
@@ -1583,6 +1677,13 @@ footer {
             f.write(archive_page_html)
         print(f"アーカイブ出力完了！ -> {archive_path}")
 
+        for path, page_html in genre_pages:
+            genre_path = os.path.join(docs_dir, *path.strip("/").split("/"), "index.html")
+            os.makedirs(os.path.dirname(genre_path), exist_ok=True)
+            with open(genre_path, mode='w', encoding='utf-8') as f:
+                f.write(page_html)
+        print(f"ジャンル別ページ出力完了！（{len(genre_pages)} ページ）")
+
         # docs/about/index.html の出力
         about_dir = os.path.join(docs_dir, "about")
         os.makedirs(about_dir, exist_ok=True)
@@ -1679,7 +1780,7 @@ footer {
 
         write_sitemap(docs_dir, archive_dates, months)
         write_robots(docs_dir)
-        print(f"sitemap.xml / robots.txt 出力完了！（登録URL {len(archive_dates) + len(months) + 2} 件）")
+        print(f"sitemap.xml / robots.txt 出力完了！（登録URL {len(archive_dates) + len(months) + len(GENRE_PAGES) + 2} 件）")
 
     except Exception as e:
         print(f"Webサイトビルド中にエラーが発生しました: {e}")

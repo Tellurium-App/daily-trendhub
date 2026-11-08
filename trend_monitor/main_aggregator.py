@@ -11,7 +11,7 @@ import urllib.parse
 # パスを追加して同一ディレクトリ内のモジュールを確実にインポートできるようにする
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
-from steam_monitor import get_steam_trends, get_steam_free_trends
+from steam_monitor import get_steam_trends, get_steam_free_trends, get_steam_free_promos
 from epic_monitor import get_epic_free_games
 from gadget_monitor import get_gadget_trends
 from anime_monitor import get_anime_trends
@@ -625,10 +625,12 @@ def aggregate_and_draft():
     games = get_steam_trends()
     epic_free = get_epic_free_games()
     steam_free = get_steam_free_trends()
+    # 期間限定0円は頻度を数えるためにCSVへ記録するだけ（ページには出さない）
+    steam_free_promos = get_steam_free_promos()
     anime = get_anime_trends()
     gadgets = get_gadget_trends()
 
-    all_items = games + epic_free + steam_free + anime + gadgets
+    all_items = games + epic_free + steam_free + steam_free_promos + anime + gadgets
     now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     
     # 1. CSVへの保存（Excelの文字化けを防ぐため utf-8-sig を使用）

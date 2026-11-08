@@ -123,6 +123,52 @@ def get_steam_free_trends(limit: int = 10) -> List[Dict[str, Any]]:
     return trends
 
 
+def get_steam_free_promos(limit: int = 50) -> List[Dict[str, Any]]:
+    """Steamで期間限定0円（セール中かつ価格0円＝100%OFF）の作品を取得します。
+
+    基本プレイ無料はセール扱いにならないので specials=1 で外れる。
+    追加コンテンツも混ざるため、ゲーム本体だけの検索（category1=998）と突き合わせて区別する。
+    2026-11-08 時点では、どれくらいの頻度で出るかを数えるためにCSVへ記録するだけで、ページには出していない。
+    """
+    base = ("https://store.steampowered.com/search/results/"
+            f"?specials=1&maxprice=free&cc=jp&l=japanese&json=1&count={limit}")
+
+    def fetch(url):
+        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'})
+        with urllib.request.urlopen(req, timeout=15) as response:
+            return json.loads(response.read().decode('utf-8')).get("items", [])
+
+    def app_id(item):
+        m = re.search(r"/apps/(\d+)/", item.get("logo", ""))
+        return m.group(1) if m else None
+
+    try:
+        items = fetch(base)
+        game_ids = {app_id(i) for i in fetch(base + "&category1=998")}
+    except Exception as e:
+        print(f"Steamの期間限定0円の取得中にエラーが発生しました: {e}")
+        return []
+
+    promos = []
+    for item in items:
+        aid = app_id(item)
+        if not aid:
+            continue
+        is_game = aid in game_ids
+        promos.append({
+            "id": aid,
+            "title": item.get("name", "").strip(),
+            "url": f"https://store.steampowered.com/app/{aid}/",
+            # free_steam で始めると基本プレイ無料の履歴（load_history の前方一致）に混ざるので別の名前にする
+            "type": "promo_steam_free",
+            "headline": "【Steam 期間限定0円・ゲーム】" if is_game else "【Steam 期間限定0円・追加コンテンツ等】",
+            "price_info": "0円（期間限定）",
+            "source": "Steam Store",
+            "discount_percent": 100,
+        })
+    return promos
+
+
 if __name__ == "__main__":
     print("Steamのトレンド情報を取得中...")
     results = get_steam_trends()

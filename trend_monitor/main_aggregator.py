@@ -40,6 +40,10 @@ SITE_BASE_URL = os.environ.get(
 # 一覧に載せるアーカイブの最大件数
 ARCHIVE_LIST_LIMIT = 30
 
+# 2026-10-05 以前の日別ページは、タイトル・説明文を 2026-11-08 に今の型へ書き直した。
+# sitemap の lastmod を書き直した日にして、再クロールを促す。
+ARCHIVE_META_REVISED = (datetime.date(2026, 10, 5), datetime.date(2026, 11, 8))
+
 # data/trend_report.csv の列。末尾2列は 2026-08-08 に追加（それ以前の行は空）。
 CSV_HEADER = ["ID", "タイプ", "見出し", "タイトル", "価格情報", "URL", "情報源", "取得日時",
               "元価格", "割引率"]
@@ -567,7 +571,9 @@ def write_sitemap(docs_dir: str, dates: list, months: list = ()) -> None:
         (f"{SITE_BASE_URL}/about/", today)
     ]
     entries += [(f"{SITE_BASE_URL}/{path}", today) for _, path, _ in GENRE_PAGES]
-    entries += [(f"{SITE_BASE_URL}/{archive_rel_path(d)}", d) for d in dates]
+    revised_until, revised_on = ARCHIVE_META_REVISED
+    entries += [(f"{SITE_BASE_URL}/{archive_rel_path(d)}", revised_on if d <= revised_until else d)
+                for d in dates]
     # 月間ページの中身は月末で確定するので、lastmod は月末日にする
     entries += [(f"{SITE_BASE_URL}/{monthly_rel_path(y, m)}", month_last_day(y, m)) for y, m in months]
 

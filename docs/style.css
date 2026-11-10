@@ -466,6 +466,46 @@ section {
     overflow-x: auto;
 }
 
+.game-history .table-wrap {
+    max-width: 100%;
+}
+
+.game-history-table {
+    min-width: 820px;
+}
+
+.sale-status,
+.record-note {
+    margin-bottom: 24px;
+}
+
+.record-note {
+    margin-top: 24px;
+    color: var(--text-secondary);
+}
+
+.history-actions {
+    margin-top: 32px;
+}
+
+.game-history .archive-list a:hover {
+    color: var(--accent-cyan);
+}
+
+.game-history a:focus-visible,
+.game-history .table-wrap:focus-visible,
+.history-games a:focus-visible,
+.game-history-link:focus-visible {
+    outline: 2px solid var(--accent-cyan);
+    outline-offset: 4px;
+}
+
+.history-games a,
+header h1 {
+    max-width: 100%;
+    overflow-wrap: anywhere;
+}
+
 .ranking-table {
     width: 100%;
     border-collapse: collapse;

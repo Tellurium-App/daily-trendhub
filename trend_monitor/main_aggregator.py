@@ -1,3 +1,4 @@
+import argparse
 import os
 import collections
 import csv
@@ -55,6 +56,9 @@ STREAK_BADGE_MIN_DAYS = 3
 # 7/18〜10/5 の実測で、間が1〜8日の再登場は割引率もほぼ同じ（一覧から一時的に外れただけ）、
 # 12日以上空くと別のセールだった。
 SALE_GAP_DAYS = 10
+
+# 複数回のセールを比較できるゲームだけ、個別の履歴ページを作る。
+GAME_PAGE_MIN_SALES = 2
 
 # 月間ランキングの掲載件数
 MONTHLY_TOP_N = 10
@@ -163,6 +167,189 @@ def sale_episodes(sale_disc: dict) -> list:
         else:
             episodes.append((day, day, disc))
     return episodes
+
+
+def game_rel_path(gid: str) -> str:
+    return f"game/steam/app/{gid}/"
+
+
+def load_game_pages(csv_path: str) -> dict:
+    """既存の区切り方を使い、個別ページの対象と各回のCSV情報を集める。"""
+    history = load_history(csv_path, "game")
+    info, sale_rows = {}, collections.defaultdict(dict)
+    record_start = None
+    with open(csv_path, encoding="utf-8-sig", newline="") as f:
+        for row in csv.DictReader(f):
+            stamp = row.get("取得日時") or ""
+            try:
+                day = datetime.date.fromisoformat(stamp[:10])
+            except ValueError:
+                continue
+            # 注記の起点はゲームに限らず、CSV全体の最初の日付。
+            record_start = min(record_start, day) if record_start else day
+            gid = row.get("ID") or ""
+            if not re.fullmatch(r"[0-9]+", gid) or not (row.get("タイプ") or "").startswith("game"):
+                continue
+            if gid not in info or stamp >= info[gid][0]:
+                info[gid] = (stamp, row)
+            if parse_discount(row) > 0:
+                previous = sale_rows[gid].get(day.isoformat())
+                if previous is None or stamp >= previous[0]:
+                    sale_rows[gid][day.isoformat()] = (stamp, row)
+
+    pages = {}
+    for gid in sorted(info, key=int):
+        stat = history[gid]
+        episodes = sale_episodes(stat["sale_disc"])
+        if len(episodes) < GAME_PAGE_MIN_SALES:
+            continue
+        sales = []
+        previous_end = None
+        for start, end, discount in episodes:
+            price = (sale_rows[gid][end.isoformat()][1].get("価格情報") or "").strip()
+            sales.append({
+                "start": start, "end": end, "discount": discount,
+                "listed_days": sum(start.isoformat() <= d <= end.isoformat() for d in stat["sale_disc"]),
+                "price": "—" if not price or price == "価格情報なし" else price,
+                "gap": (start - previous_end).days - 1 if previous_end else None,
+            })
+            previous_end = end
+        row = info[gid][1]
+        pages[gid] = {
+            "title": row["タイトル"], "url": row["URL"], "sales": sales,
+            "sale_disc": stat["sale_disc"], "record_start": record_start,
+            "listed_dates": stat["days"],
+            "last_listed": datetime.date.fromisoformat(max(stat["days"])),
+        }
+    return pages
+
+
+def japanese_date(day: datetime.date) -> str:
+    return f"{day.year}年{day.month}月{day.day}日"
+
+
+def build_game_page(game: dict, docs_dir: str, today: datetime.date, gid: str) -> str:
+    """記録上のセール履歴。価格は各回の最終掲載日の行を使う。"""
+    sales = game["sales"]
+    latest = sales[-1]
+    if today.isoformat() in game["sale_disc"]:
+        run = (today - latest["start"]).days + 1
+        status = f'現在セール中（{game["sale_disc"][today.isoformat()]}%OFF・{run}日目）'
+    else:
+        end = latest["end"]
+        status = f"現在セール中の記録はありません（最後の記録は {end.month}月{end.day}日）"
+    rows, daily_links = [], []
+    for number, sale in reversed(list(enumerate(sales, 1))):
+        gap = f'{sale["gap"]}日' if sale["gap"] is not None else "—"
+        period = f'{japanese_date(sale["start"])}〜{japanese_date(sale["end"])}'
+        rows.append(f"""<tr><th scope="row">{number}</th><td class="num">{period}</td>
+                    <td class="num">{sale['listed_days']}日</td><td class="num">{sale['discount']}%OFF</td>
+                    <td>{html.escape(sale['price'])}</td><td class="num">{gap}</td></tr>""")
+        start_path = archive_rel_path(sale["start"])
+        label = f'{number}回目：{japanese_date(sale["start"])}'
+        if os.path.isfile(os.path.join(docs_dir, *start_path.strip("/").split("/"), "index.html")):
+            label = f'<a href="/{start_path}">{label}</a>'
+        daily_links.append(f"<li>{label}</li>")
+    record_start = japanese_date(game["record_start"])
+    content = f"""
+        <section class="game-history">
+            <p class="sale-status">{status}</p>
+            <div class="table-wrap" tabindex="0" role="region" aria-label="セール履歴の表">
+                <table class="ranking-table game-history-table">
+                    <thead><tr><th scope="col">回</th><th scope="col">期間（開始日〜最終掲載日）</th>
+                    <th scope="col">掲載された日数</th><th scope="col">最大割引率</th>
+                    <th scope="col">その回の価格</th><th scope="col">前のセールからの間隔</th></tr></thead>
+                    <tbody>{''.join(rows)}</tbody>
+                </table>
+            </div>
+            <p class="record-note">この表は TrendHub が {record_start}から毎日記録した範囲のものです。それ以前のセールは含みません。記録は Steam の売上上位・セール上位に載った日だけです。</p>
+            <div class="section-title"><h2>各回の開始日の記録</h2></div>
+            <ul class="archive-list">{''.join(daily_links)}</ul>
+            <div class="btn-container history-actions">
+                <a href="{html.escape(game['url'], quote=True)}" target="_blank" rel="noopener" class="btn btn-primary">Steamで詳細を見る</a>
+                <a href="/game/steam/" class="btn btn-secondary">Steamセール一覧に戻る</a>
+            </div>
+        </section>"""
+    title = game["title"]
+    max_discount = max(s["discount"] for s in sales)
+    return build_page(
+        title=(f"{title}のSteamセール履歴：記録上{len(sales)}回・最大{max_discount}%OFF"
+               f"（{today.month}月{today.day}日更新） - TrendHub"),
+        description=(f"{title}の直近の記録は{japanese_date(latest['start'])}〜{japanese_date(latest['end'])}、"
+                     f"最大{latest['discount']}%OFFです。{record_start}からの記録上{len(sales)}回のセールを掲載しています。"),
+        canonical_url=f"{SITE_BASE_URL}/{game_rel_path(gid)}",
+        heading=f"{title}のSteamセール履歴", date_label=f"{japanese_date(today)} 更新",
+        game_cards_html="", gadget_cards_html="", archive_html="", depth=4, about_html=content,
+    )
+
+
+def write_game_pages(csv_path: str, docs_dir: str, today: datetime.date = None,
+                     game_pages: dict = None) -> dict:
+    """ネットワーク・CSV追記・日別や月間ページの出力をせず、ゲーム別ページだけ作る。"""
+    today = today or datetime.date.today()
+    pages = load_game_pages(csv_path) if game_pages is None else game_pages
+    for gid, game in pages.items():
+        path = os.path.join(docs_dir, *game_rel_path(gid).strip("/").split("/"), "index.html")
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(build_game_page(game, docs_dir, today, gid))
+    return pages
+
+
+def link_game_history_cards(cards_html: str, game_pages: dict) -> str:
+    """Steamボタンのあるカードにだけ、対象ゲームの履歴リンクを足す（再適用可能）。"""
+    pattern = (r'(<a href="https://store\.steampowered\.com/app/([0-9]+)/[^"<>]*"'
+               r'[^>]*class="btn btn-primary"[^>]*>Steamで詳細を見る</a>)'
+               r'(?:\s*<a [^>]*class="btn btn-secondary game-history-link"[^>]*>セール履歴</a>)?')
+
+    def replace(match):
+        gid = match[2]
+        link = (f'\n                        <a href="/{game_rel_path(gid)}" '
+                'class="btn btn-secondary game-history-link">セール履歴</a>') if gid in game_pages else ""
+        return match[1] + link
+
+    return re.sub(pattern, replace, cards_html)
+
+
+def build_game_history_index(game_pages: dict) -> str:
+    if not game_pages:
+        return ""
+    items = "".join(
+        f'<li><a href="/{game_rel_path(gid)}">{html.escape(game["title"])}</a></li>'
+        for gid, game in sorted(game_pages.items(), key=lambda pair: (pair[1]["title"].casefold(), pair[0]))
+    )
+    return f"""<section class="history-games" id="game-sale-histories">
+            <div class="section-title"><h2>セール履歴のあるゲーム</h2></div>
+            <ul class="archive-list">{items}</ul>
+        </section>"""
+
+
+def refresh_game_history_index(docs_dir: str, game_pages: dict) -> None:
+    """既存Steam一覧への履歴リンクだけ更新。日付・価格や過去ページには触れない。"""
+    path = os.path.join(docs_dir, "game", "steam", "index.html")
+    if not os.path.isfile(path):
+        return
+    with open(path, encoding="utf-8") as f:
+        page = f.read()
+    page = link_game_history_cards(page, game_pages)
+    page = re.sub(r'<section class="history-games" id="game-sale-histories">.*?</section>',
+                  "", page, flags=re.DOTALL)
+    page = page.replace("    </main>", build_game_history_index(game_pages) + "    </main>")
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(page)
+
+
+def rebuild_game_pages(csv_path: str, docs_dir: str) -> dict:
+    """オフライン入口。ゲーム別HTMLとSteam一覧の履歴リンク、sitemapだけを更新。"""
+    pages = write_game_pages(csv_path, docs_dir)
+    refresh_game_history_index(docs_dir, pages)
+    # 存在する月間ページを列挙し、未生成の月をsitemapに作り足さない。
+    months = []
+    for path in glob.glob(os.path.join(docs_dir, "monthly", "[0-9]" * 4, "[0-9]" * 2, "index.html")):
+        y, m = path.replace("\\", "/").split("/")[-3:-1]
+        months.append((int(y), int(m)))
+    write_sitemap(docs_dir, collect_archive_dates(docs_dir), sorted(months, reverse=True), pages)
+    return pages
 
 
 def item_stats(item: dict, history: dict, today: datetime.date) -> dict:
@@ -441,7 +628,7 @@ def build_page(title: str, description: str, canonical_url: str, heading: str,
                date_label: str, game_cards_html: str, gadget_cards_html: str,
                archive_html: str, depth: int, pick_html: str = "",
                about_html: str = "", anime_cards_html: str = "",
-               free_html: str = "", only: str = "") -> str:
+               free_html: str = "", only: str = "", game_pages: dict = None) -> str:
     """1ページ分のHTMLを組み立てます。depth はサイトルートからの階層の深さ。
 
     only に GENRE_PAGES のキーを渡すと、そのジャンルの節だけを出す（ジャンル別ページ用）。
@@ -449,6 +636,11 @@ def build_page(title: str, description: str, canonical_url: str, heading: str,
     prefix = "../" * depth
     esc_title = html.escape(title)
     esc_desc = html.escape(description)
+    if game_pages is not None:
+        game_cards_html = link_game_history_cards(game_cards_html, game_pages)
+        pick_html = link_game_history_cards(pick_html, game_pages)
+        if only == "steam":
+            archive_html += build_game_history_index(game_pages)
 
     # アフィリエイトIDが設定されている時だけ、広告表示とアソシエイト表示を出す
     notice_html = (
@@ -563,8 +755,8 @@ def build_page(title: str, description: str, canonical_url: str, heading: str,
 </html>"""
 
 
-def write_sitemap(docs_dir: str, dates: list, months: list = ()) -> None:
-    """トップ、Aboutページ、ジャンル別、全アーカイブ、月間ランキングを載せた sitemap.xml を出力します。"""
+def write_sitemap(docs_dir: str, dates: list, months: list = (), game_pages: dict = None) -> None:
+    """従来のURLとゲーム別ページを掲載。ゲームのlastmodは最終CSV掲載日。"""
     today = datetime.date.today()
     entries = [
         (f"{SITE_BASE_URL}/", today),
@@ -576,6 +768,8 @@ def write_sitemap(docs_dir: str, dates: list, months: list = ()) -> None:
                 for d in dates]
     # 月間ページの中身は月末で確定するので、lastmod は月末日にする
     entries += [(f"{SITE_BASE_URL}/{monthly_rel_path(y, m)}", month_last_day(y, m)) for y, m in months]
+    entries += [(f"{SITE_BASE_URL}/{game_rel_path(gid)}", game["last_listed"])
+                for gid, game in (game_pages or {}).items()]
 
     body = "\n".join(
         f"  <url>\n    <loc>{loc}</loc>\n    <lastmod>{d.isoformat()}</lastmod>\n  </url>"
@@ -738,6 +932,7 @@ def aggregate_and_draft():
     # 過去の掲載履歴を読み込む（今日ぶんは上でCSVに書き込み済み）
     today_date = datetime.date.today()
     history = load_history(csv_path, "game")
+    game_pages = load_game_pages(csv_path)
     anime_history = load_history(csv_path, "anime")
     free_history = load_history(csv_path, "free_steam")
     print(f"掲載履歴を読み込み: ゲーム {len(history)} / アニメ {len(anime_history)} タイトル")
@@ -984,6 +1179,7 @@ def aggregate_and_draft():
         pick_html=pick_html,
         anime_cards_html=anime_joined,
         free_html=free_html,
+        game_pages=game_pages,
     )
 
     archive_page_html = build_page(
@@ -999,6 +1195,7 @@ def aggregate_and_draft():
         pick_html=pick_html,
         anime_cards_html=anime_joined,
         free_html=free_html,
+        game_pages=game_pages,
     )
 
     archive_path = os.path.join(docs_dir, *archive_rel_path(today).strip("/").split("/"), "index.html")
@@ -1042,6 +1239,7 @@ def aggregate_and_draft():
             anime_cards_html=anime_joined,
             free_html=free_html,
             only=key,
+            game_pages=game_pages,
         )))
 
     # CSSテンプレート
@@ -1513,6 +1711,46 @@ section {
     overflow-x: auto;
 }
 
+.game-history .table-wrap {
+    max-width: 100%;
+}
+
+.game-history-table {
+    min-width: 820px;
+}
+
+.sale-status,
+.record-note {
+    margin-bottom: 24px;
+}
+
+.record-note {
+    margin-top: 24px;
+    color: var(--text-secondary);
+}
+
+.history-actions {
+    margin-top: 32px;
+}
+
+.game-history .archive-list a:hover {
+    color: var(--accent-cyan);
+}
+
+.game-history a:focus-visible,
+.game-history .table-wrap:focus-visible,
+.history-games a:focus-visible,
+.game-history-link:focus-visible {
+    outline: 2px solid var(--accent-cyan);
+    outline-offset: 4px;
+}
+
+.history-games a,
+header h1 {
+    max-width: 100%;
+    overflow-wrap: anywhere;
+}
+
 .ranking-table {
     width: 100%;
     border-collapse: collapse;
@@ -1786,12 +2024,24 @@ footer {
                 f.write(monthly_html)
         print(f"月間ランキング出力完了！（{len(months)} か月）")
 
-        write_sitemap(docs_dir, archive_dates, months)
+        write_game_pages(csv_path, docs_dir, today, game_pages)
+        print(f"ゲーム別ページ出力完了！（{len(game_pages)} ページ）")
+        write_sitemap(docs_dir, archive_dates, months, game_pages)
         write_robots(docs_dir)
-        print(f"sitemap.xml / robots.txt 出力完了！（登録URL {len(archive_dates) + len(months) + len(GENRE_PAGES) + 2} 件）")
+        print(f"sitemap.xml / robots.txt 出力完了！（登録URL {len(archive_dates) + len(months) + len(GENRE_PAGES) + len(game_pages) + 2} 件）")
 
     except Exception as e:
         print(f"Webサイトビルド中にエラーが発生しました: {e}")
 
 if __name__ == "__main__":
-    aggregate_and_draft()
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--game-pages-only", action="store_true",
+                        help="CSVのみからゲーム別ページ・Steam一覧の履歴リンク・sitemapを更新する")
+    args = parser.parse_args()
+    if args.game_pages_only:
+        base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        pages = rebuild_game_pages(os.path.join(base_dir, "data", "trend_report.csv"),
+                                   os.path.join(base_dir, "docs"))
+        print(f"ゲーム別ページ出力完了！（{len(pages)} ページ）")
+    else:
+        aggregate_and_draft()

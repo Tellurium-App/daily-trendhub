@@ -7,7 +7,8 @@ from typing import List, Dict, Any
 _PRICE_RE = re.compile(r'(?:(\d+)\s*万)?\s*(\d{1,3}(?:,\d{3})+|\d+)?\s*円')
 
 # 金額の直後にこれが続くときは値引き額なので、販売価格として採らない
-_DISCOUNT_SUFFIX_RE = re.compile(r'^\s*(?:引き|引|オフ|OFF|off|安く|安|分|相当|お得|得|還元)')
+# （「7万8000円も安い」「6,000円も安く」のように「も」が挟まる書き方がある）
+_DISCOUNT_SUFFIX_RE = re.compile(r'^\s*(?:も\s*)?(?:引き|引|オフ|OFF|off|安く|安|分|相当|お得|得|還元)')
 
 # 金額の直後にこれが続くときは販売価格である見込みが高い
 _PRICE_SUFFIX_RE = re.compile(r'^\s*(?:で(?:販売|発売|提供|購入|登場|発表|投入)|にて(?:販売|購入)|に値下げ|になる)')
@@ -56,8 +57,11 @@ def extract_price(text: str) -> str:
         if _PRICE_SUFFIX_RE.match(after) or _PRICE_PREFIX_RE.search(before):
             return f"{value:,}円"
 
+    # 説明文は途中で切れるので「6,000円オ」のように値引きの語が欠けることがある。
+    # 同じ金額が文中のどこかで値引き額として出ていれば、切れた側も値引き額として扱う
+    discounts = {value for value, before, after in candidates if _DISCOUNT_SUFFIX_RE.match(after)}
     for value, before, after in candidates:
-        if not _DISCOUNT_SUFFIX_RE.match(after):
+        if value not in discounts:
             return f"{value:,}円"
 
     return PRICE_UNKNOWN

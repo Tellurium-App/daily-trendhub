@@ -111,11 +111,31 @@ class GamePagesTest(unittest.TestCase):
         page = self.generated_html()
         self.assertIn('A &amp; &lt;B&gt; &quot;C&quot;のSteamセール履歴', page)
         self.assertNotIn(self.title, page)
-        self.assertIn('content="A &amp; &lt;B&gt; &quot;C&quot;の直近の記録は2026年10月1日〜2026年10月2日、最大60%OFFです。2026年8月1日からの記録上2回', page)
+        answer = ('TrendHub の記録（2026年8月1日以降・Steam の売上上位とセール上位に載った日だけ）では、'
+                  'A &amp; &lt;B&gt; &quot;C&quot;は Steam で2回セールになっています。'
+                  '最大割引率は60%OFF、記録上の最安値は850円（通常価格 2,000円）です。前のセールからの間隔は20日でした。')
+        self.assertIn(f'<meta name="description" content="{answer}">', page)
+        self.assertIn(f'<h1>A &amp; &lt;B&gt; &quot;C&quot;のSteamセール履歴</h1>\n            <p class="subtitle">{answer}</p>', page)
+        self.assertIn('<title>A &amp; &lt;B&gt; &quot;C&quot;のSteamセール履歴：記録上2回・最大60%OFF・最安値850円（10月2日更新）', page)
         self.assertIn('href="https://daily-trendhub.com/game/steam/app/100/"', page)
         self.assertIn('property="og:url" content="https://daily-trendhub.com/game/steam/app/100/"', page)
         self.assertIn('href="../../../../style.css"', page)
         self.assertIn('?a=1&amp;b=2"', page)
+
+    def test_summary_without_price_or_original(self):
+        game = self.pages()["300"]
+        summary = agg.game_summary(game)
+        self.assertIn("Zuluは Steam で2回セールになっています。最大割引率は25%OFFです。", summary)
+        self.assertNotIn("最安値", summary)
+        self.assertNotIn("最安値", agg.build_game_page(game, str(self.docs), self.today, "300").split("</title>")[0])
+        game["sales"][0]["original"] = None
+        game["sales"][0]["price"] = "900円"
+        self.assertIn("記録上の最安値は900円です。", agg.game_summary(game))
+
+    def test_other_pages_keep_site_subtitle(self):
+        page = agg.build_page(title="t", description="d", canonical_url="u", heading="h", date_label="x",
+                              game_cards_html="", gadget_cards_html="", archive_html="", depth=0)
+        self.assertIn(f'<p class="subtitle">{agg.SITE_SUBTITLE}</p>', page)
 
     def test_status_current_discount_and_newest_first(self):
         self.generate()

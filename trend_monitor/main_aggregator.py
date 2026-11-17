@@ -206,11 +206,14 @@ def load_game_pages(csv_path: str) -> dict:
         sales = []
         previous_end = None
         for start, end, discount in episodes:
-            price = (sale_rows[gid][end.isoformat()][1].get("価格情報") or "").strip()
+            end_row = sale_rows[gid][end.isoformat()][1]
+            price = (end_row.get("価格情報") or "").strip()
+            original = (end_row.get("元価格") or "").strip()
             sales.append({
                 "start": start, "end": end, "discount": discount,
                 "listed_days": sum(start.isoformat() <= d <= end.isoformat() for d in stat["sale_disc"]),
                 "price": "—" if not price or price == "価格情報なし" else price,
+                "original": int(original) if original.isdigit() else None,
                 "gap": (start - previous_end).days - 1 if previous_end else None,
             })
             previous_end = end
@@ -226,6 +229,37 @@ def load_game_pages(csv_path: str) -> dict:
 
 def japanese_date(day: datetime.date) -> str:
     return f"{day.year}年{day.month}月{day.day}日"
+
+
+def yen_value(price: str):
+    """「3742円」の形だけを数にする。それ以外（「—」など）は None。"""
+    m = re.fullmatch(r"([0-9]+)円", price)
+    return int(m.group(1)) if m else None
+
+
+def lowest_sale(sales: list):
+    """記録上の最安値の回。値段の無い回は除く。"""
+    priced = [s for s in sales if yen_value(s["price"]) is not None]
+    return min(priced, key=lambda s: yen_value(s["price"])) if priced else None
+
+
+def game_summary(game: dict) -> str:
+    """見出しの直下に置く答えの文。AI が一文だけ抜き出しても記録の条件が残るよう、条件を文頭に置く。"""
+    sales = game["sales"]
+    since = japanese_date(game["record_start"])
+    max_discount = max(s["discount"] for s in sales)
+    parts = [f"TrendHub の記録（{since}以降・Steam の売上上位とセール上位に載った日だけ）では、"
+             f"{game['title']}は Steam で{len(sales)}回セールになっています。"]
+    low = lowest_sale(sales)
+    if low:
+        regular = f"（通常価格 {low['original']:,}円）" if low.get("original") else ""
+        parts.append(f"最大割引率は{max_discount}%OFF、記録上の最安値は{yen_value(low['price']):,}円{regular}です。")
+    else:
+        parts.append(f"最大割引率は{max_discount}%OFFです。")
+    gaps = [f"{s['gap']}日" for s in sales if s["gap"] is not None]
+    if gaps:
+        parts.append(f"前のセールからの間隔は{'・'.join(gaps)}でした。")
+    return "".join(parts)
 
 
 def build_game_page(game: dict, docs_dir: str, today: datetime.date, gid: str) -> str:
@@ -272,11 +306,13 @@ def build_game_page(game: dict, docs_dir: str, today: datetime.date, gid: str) -
         </section>"""
     title = game["title"]
     max_discount = max(s["discount"] for s in sales)
+    low = lowest_sale(sales)
+    lowest = f"・最安値{yen_value(low['price']):,}円" if low else ""
+    summary = game_summary(game)
     return build_page(
-        title=(f"{title}のSteamセール履歴：記録上{len(sales)}回・最大{max_discount}%OFF"
+        title=(f"{title}のSteamセール履歴：記録上{len(sales)}回・最大{max_discount}%OFF{lowest}"
                f"（{today.month}月{today.day}日更新） - TrendHub"),
-        description=(f"{title}の直近の記録は{japanese_date(latest['start'])}〜{japanese_date(latest['end'])}、"
-                     f"最大{latest['discount']}%OFFです。{record_start}からの記録上{len(sales)}回のセールを掲載しています。"),
+        description=summary, subtitle=summary,
         canonical_url=f"{SITE_BASE_URL}/{game_rel_path(gid)}",
         heading=f"{title}のSteamセール履歴", date_label=f"{japanese_date(today)} 更新",
         game_cards_html="", gadget_cards_html="", archive_html="", depth=4, about_html=content,
@@ -624,11 +660,16 @@ def build_archive_section(dates: list, depth: int, current: datetime.date = None
 """
 
 
+SITE_SUBTITLE = ("Steamのセール・売上上位ゲーム、Epic Gamesの無料配布と基本プレイ無料の人気作、"
+                 "放送中アニメの話題作、ガジェット系メディアの新着ニュースを毎日自動集計してお届けする情報サイトです。")
+
+
 def build_page(title: str, description: str, canonical_url: str, heading: str,
                date_label: str, game_cards_html: str, gadget_cards_html: str,
                archive_html: str, depth: int, pick_html: str = "",
                about_html: str = "", anime_cards_html: str = "",
-               free_html: str = "", only: str = "", game_pages: dict = None) -> str:
+               free_html: str = "", only: str = "", game_pages: dict = None,
+               subtitle: str = None) -> str:
     """1ページ分のHTMLを組み立てます。depth はサイトルートからの階層の深さ。
 
     only に GENRE_PAGES のキーを渡すと、そのジャンルの節だけを出す（ジャンル別ページ用）。
@@ -733,7 +774,7 @@ def build_page(title: str, description: str, canonical_url: str, heading: str,
             <nav class="genre-nav">{nav_html}</nav>
             <div class="date-badge">{date_label}</div>
             <h1>{html.escape(heading)}</h1>
-            <p class="subtitle">Steamのセール・売上上位ゲーム、Epic Gamesの無料配布と基本プレイ無料の人気作、放送中アニメの話題作、ガジェット系メディアの新着ニュースを毎日自動集計してお届けする情報サイトです。</p>
+            <p class="subtitle">{html.escape(subtitle or SITE_SUBTITLE)}</p>
         </div>
     </header>
 {notice_html}

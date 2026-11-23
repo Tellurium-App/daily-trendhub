@@ -170,7 +170,27 @@ class GamePagesTest(unittest.TestCase):
         after = entries()
         self.assertEqual({url: after[url] for url in before}, before)
         self.assertEqual(len(after), 10)
-        self.assertEqual(after[agg.SITE_BASE_URL + "/game/steam/app/100/"], "2026-10-03")
+        # 直す側「100」は、セール無しの掲載日（2026-10-03）ではなく
+        # 最後のセールの最終日（2026-10-02）が lastmod になる。
+        self.assertEqual(after[agg.SITE_BASE_URL + "/game/steam/app/100/"], "2026-10-02")
+
+    def test_pr1_sitemap_lastmod_control_keeps_last_listed(self):
+        pages = self.pages()
+        game = pages["100"]
+        # 直す側：最後のセールの最終日。比べる側：従来どおり最終CSV掲載日。
+        self.assertEqual(agg._game_lastmod("100", game), dt.date(2026, 10, 2))
+        self.assertEqual(agg._game_lastmod("2246340", game), dt.date(2026, 10, 3))
+        control_game = {"title": "Ctrl", "last_listed": dt.date(2026, 10, 3),
+                        "sales": [{"start": dt.date(2026, 9, 1), "end": dt.date(2026, 10, 2),
+                                   "discount": 10}]}
+        mixed = dict(pages)
+        mixed["2246340"] = control_game
+        agg.write_sitemap(str(self.docs), [dt.date(2026, 10, 1)], [(2026, 9)], mixed)
+        ns = {"s": "http://www.sitemaps.org/schemas/sitemap/0.9"}
+        root = ET.parse(self.docs / "sitemap.xml").getroot()
+        entries = {u.find("s:loc", ns).text: u.find("s:lastmod", ns).text for u in root}
+        self.assertEqual(entries[agg.SITE_BASE_URL + "/game/steam/app/100/"], "2026-10-02")
+        self.assertEqual(entries[agg.SITE_BASE_URL + "/game/steam/app/2246340/"], "2026-10-03")
 
     def test_offline_rebuild_side_effects_and_repeatability(self):
         steam = self.docs / "game/steam/index.html"

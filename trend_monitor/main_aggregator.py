@@ -916,6 +916,19 @@ def build_page(title: str, description: str, canonical_url: str, heading: str,
 </html>"""
 
 
+def _game_lastmod(gid: str, game: dict) -> datetime.date:
+    """ゲーム別ページの sitemap lastmod（中身が実際に変わった日）。
+
+    直す側：最後のセールの最終掲載日。最終CSV掲載日（last_listed）は、
+    セール無しで売上上位に載った日でも進むため、中身が変わっていない日を
+    lastmod にしてしまう。それを防ぐため、セール記録の最終日を使う。
+    比べる側：従来どおり最終CSV掲載日（出力を変えない）。
+    """
+    if is_treatment_game(gid) and game.get("sales"):
+        return game["sales"][-1]["end"]
+    return game["last_listed"]
+
+
 def write_sitemap(docs_dir: str, dates: list, months: list = (), game_pages: dict = None) -> None:
     """従来のURLとゲーム別ページを掲載。ゲームのlastmodは最終CSV掲載日。"""
     today = datetime.date.today()
@@ -929,7 +942,7 @@ def write_sitemap(docs_dir: str, dates: list, months: list = (), game_pages: dic
                 for d in dates]
     # 月間ページの中身は月末で確定するので、lastmod は月末日にする
     entries += [(f"{SITE_BASE_URL}/{monthly_rel_path(y, m)}", month_last_day(y, m)) for y, m in months]
-    entries += [(f"{SITE_BASE_URL}/{game_rel_path(gid)}", game["last_listed"])
+    entries += [(f"{SITE_BASE_URL}/{game_rel_path(gid)}", _game_lastmod(gid, game))
                 for gid, game in (game_pages or {}).items()]
 
     body = "\n".join(

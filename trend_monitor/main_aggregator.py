@@ -164,13 +164,12 @@ def _related_treatment_games(gid: str, game: dict, game_pages: dict, limit: int 
 
 
 def game_page_extra_sections(gid, game: dict = None, game_pages: dict = None) -> list:
-    """直す側だけに追加するセクションのHTML断片の並びを返す。
+    """直す側だけにページの先頭へ追加するセクションのHTML断片の並びを返す。
 
-    PR1：直す側だけに、目に見えるパンくずリストと BreadcrumbList の
-    JSON-LD を返す。比べる側は常に空のままにする。タイトルが無ければ
-    （game が無い場合など）何も返さない。
-    束ね改善：直す側の中だけで張る「セールの傾向が近いゲーム」の
-    内部リンクも返す（game_pages が渡された場合のみ）。
+    ページの先頭に置くのはパンくず（と BreadcrumbList の JSON-LD）だけ。
+    「セールの傾向」と「セールの傾向が近いゲーム」は表より下へ置くため、
+    game_page_bottom_sections() が別に返す。比べる側は常に空のままにする。
+    タイトルが無ければ（game が無い場合など）何も返さない。
     """
     if is_control_game(gid):
         return []
@@ -195,6 +194,22 @@ def game_page_extra_sections(gid, game: dict = None, game_pages: dict = None) ->
         </nav>
         <script type="application/ld+json">{_breadcrumb_json_ld(gid, title)}</script>"""
     sections = [breadcrumb]
+    return sections
+
+
+def game_page_bottom_sections(gid, game: dict = None, game_pages: dict = None) -> list:
+    """直す側だけにセール履歴の表より下へ追加するセクションの並びを返す。
+
+    ページの主役はセール履歴の表なので、「セールの傾向」と「セールの傾向が
+    近いゲーム」は表より下に置く。比べる側は常に空のままにする。
+    タイトルが無ければ（game が無い場合など）何も返さない。
+    """
+    if is_control_game(gid):
+        return []
+    title = (game or {}).get("title") or ""
+    if not title:
+        return []
+    sections = []
     if game.get("sales"):
         sections.append(_sale_trend_section(game))
     related = _related_treatment_games(gid, game, game_pages)
@@ -457,12 +472,16 @@ def build_game_page(game: dict, docs_dir: str, today: datetime.date, gid: str,
                 <a href="/game/steam/" class="btn btn-secondary">Steamセール一覧に戻る</a>
             </div>
         </section>"""
-    # PR1の群分け：直す側だけの追加セクションを、<main> の先頭に出す。
-    # パンくずはページの先頭にあるのが自然なため、末尾ではなく先頭に置く。
-    # 比べる側は game_page_extra_sections() が空の並びを返すので、出力は変わらない。
+    # PR1の群分け：直す側だけの追加セクションを出す。パンくずはページの
+    # 先頭（<main> の先頭）に置き、「セールの傾向」と「セールの傾向が近い
+    # ゲーム」はページの主役であるセール履歴の表より下に置く。
+    # 比べる側は両方とも空の並びを返すので、出力は変わらない。
     extra_sections = game_page_extra_sections(gid, game, game_pages)
+    bottom_sections = game_page_bottom_sections(gid, game, game_pages)
     if extra_sections:
         content = "".join(extra_sections) + content
+    if bottom_sections:
+        content = content + "".join(bottom_sections)
     title = game["title"]
     max_discount = max(s["discount"] for s in sales)
     low = lowest_sale(sales)

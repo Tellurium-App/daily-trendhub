@@ -295,25 +295,48 @@ class GamePagesTest(unittest.TestCase):
 
     def test_pr1_extra_sections_breadcrumb_only_for_treatment(self):
         game = self.pages()["100"]
-        # 比べる側14本はすべて空のまま。
+        # 比べる側14本はすべて空のまま（先頭・表より下の両方）。
         for gid in agg.CONTROL_GAME_IDS:
             self.assertEqual(agg.game_page_extra_sections(gid, game), [])
-        # 直す側はパンくず＋セールの傾向の2断片（内部リンクは game_pages 必須）。
+            self.assertEqual(agg.game_page_bottom_sections(gid, game), [])
+        # 直す側は先頭がパンくずの1断片だけ。セールの傾向は表より下へ。
         for gid in ("32470", "100"):
             sections = agg.game_page_extra_sections(gid, game)
-            self.assertEqual(len(sections), 2)
+            self.assertEqual(len(sections), 1)
             self.assertIn("BreadcrumbList", sections[0])
             self.assertIn('aria-label="パンくずリスト"', sections[0])
             self.assertIn('href="/game/steam/"', sections[0])
-            self.assertIn("セールの傾向", sections[1])
+            bottom = agg.game_page_bottom_sections(gid, game)
+            self.assertEqual(len(bottom), 1)
+            self.assertIn("セールの傾向", bottom[0])
         # タイトルが無ければ何も足さない。
         self.assertEqual(agg.game_page_extra_sections("32470", None), [])
         self.assertEqual(agg.game_page_extra_sections("32470", {}), [])
+        self.assertEqual(agg.game_page_bottom_sections("32470", None), [])
+        self.assertEqual(agg.game_page_bottom_sections("32470", {}), [])
+
+    def test_fix2_trend_and_related_below_table(self):
+        pages = self.pages()
+        game = pages["100"]
+        treatment = agg.build_game_page(game, str(self.docs), self.today, "32470",
+                                        game_pages=pages)
+        # パンくずは表より上、「セールの傾向」と「セールの傾向が近いゲーム」
+        # は表より下。ページの主役はセール履歴の表。
+        self.assertLess(treatment.index("パンくずリスト"),
+                        treatment.index('class="game-history"'))
+        self.assertLess(treatment.index("</table>"),
+                        treatment.index("セールの傾向"))
+        self.assertLess(treatment.index("</table>"),
+                        treatment.index("セールの傾向が近いゲーム"))
+        # 比べる側にはどちらも出ない。
+        control = agg.build_game_page(game, str(self.docs), self.today, "2246340")
+        self.assertNotIn("セールの傾向", control)
+        self.assertNotIn("セールの傾向が近いゲーム", control)
 
     def test_pr1_sale_trend_section_uses_only_recorded_numbers(self):
         game = self.pages()["100"]  # 2回、割引率50%・60%、間隔20日
-        sections = agg.game_page_extra_sections("32470", game)
-        trend = sections[1]
+        bottom = agg.game_page_bottom_sections("32470", game)
+        trend = bottom[0]
         self.assertIn("記録にある2回のセールの平均割引率は55%です。", trend)
         self.assertIn("前のセールからの間隔は平均20日でした。", trend)
         self.assertIn("最初のセールは2026年9月1日に、最新のセールは2026年10月1日に始まっています。", trend)
@@ -374,8 +397,9 @@ class GamePagesTest(unittest.TestCase):
         self.assertIn("BreadcrumbList", treatment)
 
         # canonical URL（gidで決まる）と題名の日付以外、比べる側と直す側の
-        # 違いは追加断片だけであること。断片をすべて除去して比べる。
-        sections = agg.game_page_extra_sections("32470", game)
+        # 違いは追加断片だけであること。先頭・表より下の断片をすべて除去して比べる。
+        sections = (agg.game_page_extra_sections("32470", game)
+                    + agg.game_page_bottom_sections("32470", game))
         stripped = treatment
         for section in sections:
             stripped = stripped.replace(section, "", 1)
@@ -388,19 +412,22 @@ class GamePagesTest(unittest.TestCase):
     def test_pr1_related_links_only_within_treatment(self):
         pages = self.pages()
         game = pages["100"]
-        # game_pages を渡さなければ内部リンクは出ない（パンくず＋傾向の2断片）。
-        self.assertEqual(len(agg.game_page_extra_sections("100", game)), 2)
-        # 直す側はパンくず＋傾向＋内部リンクの3断片。リンク先は直す側の「300」だけ。
-        sections = agg.game_page_extra_sections("100", game, pages)
-        self.assertEqual(len(sections), 3)
-        self.assertIn("/game/steam/app/300/", sections[2])
-        self.assertNotIn("/game/steam/app/100/", sections[2])  # 自分自身へは張らない
-        self.assertIn("セールの傾向が近いゲーム", sections[2])
+        # game_pages を渡さなければ内部リンクは出ない（先頭パンくず＋表より下の傾向）。
+        self.assertEqual(len(agg.game_page_extra_sections("100", game)), 1)
+        self.assertEqual(len(agg.game_page_bottom_sections("100", game)), 1)
+        # 直す側は先頭パンくず＋表より下の傾向・内部リンク。リンク先は直す側の「300」だけ。
+        self.assertEqual(len(agg.game_page_extra_sections("100", game, pages)), 1)
+        bottom = agg.game_page_bottom_sections("100", game, pages)
+        self.assertEqual(len(bottom), 2)
+        self.assertIn("/game/steam/app/300/", bottom[1])
+        self.assertNotIn("/game/steam/app/100/", bottom[1])  # 自分自身へは張らない
+        self.assertIn("セールの傾向が近いゲーム", bottom[1])
         # 比べる側は game_pages を渡しても空のまま。
         self.assertEqual(agg.game_page_extra_sections("2246340", game, pages), [])
+        self.assertEqual(agg.game_page_bottom_sections("2246340", game, pages), [])
         # 直す側「300」からは「100」へ張られる。
         self.assertIn("/game/steam/app/100/",
-                      agg.game_page_extra_sections("300", pages["300"], pages)[2])
+                      agg.game_page_bottom_sections("300", pages["300"], pages)[1])
 
     def test_pr1_related_links_choose_closest_discount_and_count(self):
         def fake(title, discounts):
@@ -414,11 +441,11 @@ class GamePagesTest(unittest.TestCase):
             "500": fake("Far", [40, 40]),             # 割引率差10
             "2246340": fake("Control", [51, 51]),     # 比べる側：候補に入れない
         }
-        sections = agg.game_page_extra_sections("100", cur, pages)
-        links = re.findall(r'href="(/game/steam/app/[0-9]+/)"', sections[2])
+        sections = agg.game_page_bottom_sections("100", cur, pages)
+        links = re.findall(r'href="(/game/steam/app/[0-9]+/)"', sections[1])
         self.assertEqual(links, ["/game/steam/app/300/", "/game/steam/app/400/",
                                  "/game/steam/app/500/"])
-        self.assertNotIn("/game/steam/app/2246340/", sections[1])
+        self.assertNotIn("/game/steam/app/2246340/", sections[0])
 
     def test_pr1_treatment_counts_prices_match_records(self):
         self.generate()

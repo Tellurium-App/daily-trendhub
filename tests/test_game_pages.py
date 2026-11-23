@@ -323,7 +323,7 @@ class GamePagesTest(unittest.TestCase):
         # パンくずは表より上、「セールの傾向」と「セールの傾向が近いゲーム」
         # は表より下。ページの主役はセール履歴の表。
         self.assertLess(treatment.index("パンくずリスト"),
-                        treatment.index('class="game-history"'))
+                        treatment.index('class="game-history'))
         self.assertLess(treatment.index("</table>"),
                         treatment.index("セールの傾向"))
         self.assertLess(treatment.index("</table>"),
@@ -359,7 +359,7 @@ class GamePagesTest(unittest.TestCase):
         self.assertIn('<a href="/game/steam/">Steamセール</a>', page)
         self.assertIn('<li aria-current="page">A &amp; &lt;B&gt; &quot;C&quot;</li>', page)
         # パンくずは <main> の先頭（セール履歴の節より前）に出る。
-        self.assertLess(page.index("パンくずリスト"), page.index('class="game-history"'))
+        self.assertLess(page.index("パンくずリスト"), page.index('class="game-history'))
 
     def test_fix1_breadcrumb_links_use_site_link_color(self):
         game = self.pages()["100"]
@@ -403,6 +403,9 @@ class GamePagesTest(unittest.TestCase):
         stripped = treatment
         for section in sections:
             stripped = stripped.replace(section, "", 1)
+        # 目印のクラス（修正4）は直す側だけの変更なので、比べるときは外す。
+        stripped = stripped.replace('class="game-history treatment-history"',
+                                    'class="game-history"', 1)
         self.assertEqual(
             control.replace("/game/steam/app/2246340/", "/game/steam/app/GID/").replace(
                 "（10月2日更新）", ""),
@@ -484,6 +487,45 @@ class GamePagesTest(unittest.TestCase):
             for gid in ("100", "200", "300", "400", "500", "900")
             for sec in agg.game_page_bottom_sections(gid, pages[gid], pages))
         self.assertTrue(found)
+
+    def test_fix4_mobile_table_stacked_only_for_treatment(self):
+        game = self.pages()["100"]  # 2回：9月1日開始（50%・850円）、10月1日開始（60%・1500円、間隔20日）
+        treatment = agg.build_game_page(game, str(self.docs), self.today, "32470")
+        control = agg.build_game_page(game, str(self.docs), self.today, "2246340")
+        # 直す側の節だけに目印のクラスが付く。比べる側は従来のまま。
+        self.assertIn('<section class="game-history treatment-history">', treatment)
+        self.assertIn('<section class="game-history">', control)
+        self.assertNotIn("treatment-history", control)
+        # スマホ用の指定は直す側だけに出て、.treatment-history に限って効く。
+        for fragment in ("@media (max-width:640px)",
+                         ".treatment-history .game-history-table{min-width:0",
+                         ".treatment-history .game-history-table thead{display:none}",
+                         ".treatment-history .table-wrap{overflow-x:visible}"):
+            self.assertIn(fragment, treatment)
+            self.assertNotIn(fragment, control)
+        # 6列すべての見出し文言が ::before で付く。
+        for label in ("回", "期間", "掲載された日数", "最大割引率",
+                      "その回の価格", "前のセールからの間隔"):
+            self.assertIn(f'content:"{label}"', treatment)
+        # 表の6列の数字は記録と一致する（変更前と同じ値）。
+        tbody = re.search(r"<tbody>(.*?)</tbody>", treatment, re.DOTALL).group(1)
+        rows = re.findall(r"<tr>(.*?)</tr>", tbody, re.DOTALL)
+        self.assertEqual(len(rows), 2)
+        expected = []
+        for number, sale in reversed(list(enumerate(game["sales"], 1))):
+            gap = f'{sale["gap"]}日' if sale["gap"] is not None else "—"
+            expected.append((str(number),
+                             f'{agg.japanese_date(sale["start"])}〜{agg.japanese_date(sale["end"])}',
+                             f'{sale["listed_days"]}日', f'{sale["discount"]}%OFF',
+                             sale["price"], gap))
+        for row_html, want in zip(rows, expected):
+            cells = [re.sub(r"\s+", "", c)
+                     for c in re.findall(r"<t[hd][^>]*>(.*?)</t[hd]>", row_html, re.DOTALL)]
+            self.assertEqual(cells, list(want))
+        # 比べる側の表は同じ数字だが、目印もスマホ用の指定も無い。
+        control_tbody = re.search(r"<tbody>(.*?)</tbody>", control, re.DOTALL).group(1)
+        self.assertEqual(re.findall(r"<tr>(.*?)</tr>", control_tbody, re.DOTALL),
+                         re.findall(r"<tr>(.*?)</tr>", tbody, re.DOTALL))
 
     def test_pr1_treatment_counts_prices_match_records(self):
         self.generate()

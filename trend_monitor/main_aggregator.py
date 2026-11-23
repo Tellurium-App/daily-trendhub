@@ -429,9 +429,13 @@ def build_game_page(game: dict, docs_dir: str, today: datetime.date, gid: str,
     low = lowest_sale(sales)
     lowest = f"・最安値{yen_value(low['price']):,}円" if low else ""
     summary = game_summary(game)
+    # 直す側の題名は日付を入れない。毎日変わる題名は、Google に「中身が
+    # 毎日変わるページ」と見られ、lastmod や表示の安定を損なう。
+    # 比べる側は従来どおり「（M月D日更新）」を残す。
+    updated_suffix = "" if is_treatment_game(gid) else f"（{today.month}月{today.day}日更新）"
     return build_page(
         title=(f"{title}のSteamセール履歴：記録上{len(sales)}回・最大{max_discount}%OFF{lowest}"
-               f"（{today.month}月{today.day}日更新） - TrendHub"),
+               f"{updated_suffix} - TrendHub"),
         description=summary, subtitle=summary,
         canonical_url=f"{SITE_BASE_URL}/{game_rel_path(gid)}",
         heading=f"{title}のSteamセール履歴", date_label=f"{japanese_date(today)} 更新",

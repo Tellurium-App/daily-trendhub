@@ -118,7 +118,7 @@ class GamePagesTest(unittest.TestCase):
                   '最大割引率は60%OFF、記録上の最安値は850円（通常価格 2,000円）です。前のセールからの間隔は20日でした。')
         self.assertIn(f'<meta name="description" content="{answer}">', page)
         self.assertIn(f'<h1>A &amp; &lt;B&gt; &quot;C&quot;のSteamセール履歴</h1>\n            <p class="subtitle">{answer}</p>', page)
-        self.assertIn('<title>A &amp; &lt;B&gt; &quot;C&quot;のSteamセール履歴：記録上2回・最大60%OFF・最安値850円（10月2日更新）', page)
+        self.assertIn('<title>A &amp; &lt;B&gt; &quot;C&quot;のSteamセール履歴：記録上2回・最大60%OFF・最安値850円 - TrendHub', page)
         self.assertIn('href="https://daily-trendhub.com/game/steam/app/100/"', page)
         self.assertIn('property="og:url" content="https://daily-trendhub.com/game/steam/app/100/"', page)
         self.assertIn('href="../../../../style.css"', page)
@@ -327,6 +327,18 @@ class GamePagesTest(unittest.TestCase):
         # パンくずは <main> の先頭（セール履歴の節より前）に出る。
         self.assertLess(page.index("パンくずリスト"), page.index('class="game-history"'))
 
+    def test_pr1_title_date_removed_only_for_treatment(self):
+        game = self.pages()["100"]
+        control = agg.build_game_page(game, str(self.docs), self.today, "2246340")
+        treatment = agg.build_game_page(game, str(self.docs), self.today, "32470")
+        # 比べる側の題名は従来どおり日付つき。直す側は日付なし。
+        self.assertIn("（10月2日更新） - TrendHub</title>", control)
+        self.assertIn("最安値850円 - TrendHub</title>", treatment)
+        self.assertNotIn("（10月2日更新）", treatment)
+        # H1と更新バッジは両群とも変わらない（題名だけの変更）。
+        self.assertIn('<h1>A &amp; &lt;B&gt; &quot;C&quot;のSteamセール履歴</h1>', treatment)
+        self.assertIn("2026年10月2日 更新", treatment)
+
     def test_pr1_control_page_has_no_breadcrumb(self):
         game = self.pages()["100"]
         control = agg.build_game_page(game, str(self.docs), self.today, "2246340")
@@ -335,13 +347,15 @@ class GamePagesTest(unittest.TestCase):
         self.assertNotIn("パンくずリスト", control)
         self.assertIn("BreadcrumbList", treatment)
 
-        # canonical URL（gidで決まる）以外、比べる側と直す側の違いは
-        # パンくず断片だけであること。断片そのものを除去して比べる。
+        # canonical URL（gidで決まる）と題名の日付以外、比べる側と直す側の
+        # 違いは追加断片だけであること。断片をすべて除去して比べる。
         sections = agg.game_page_extra_sections("32470", game)
-        self.assertEqual(len(sections), 1)
-        stripped = treatment.replace(sections[0], "", 1)
+        stripped = treatment
+        for section in sections:
+            stripped = stripped.replace(section, "", 1)
         self.assertEqual(
-            control.replace("/game/steam/app/2246340/", "/game/steam/app/GID/"),
+            control.replace("/game/steam/app/2246340/", "/game/steam/app/GID/").replace(
+                "（10月2日更新）", ""),
             stripped.replace("/game/steam/app/32470/", "/game/steam/app/GID/"),
         )
 

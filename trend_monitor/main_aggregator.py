@@ -104,6 +104,36 @@ def _breadcrumb_json_ld(gid: str, title: str) -> str:
             .replace("<", "\\u003c").replace(">", "\\u003e").replace("&", "\\u0026"))
 
 
+def _average_text(values) -> str:
+    """平均を小数第1位まで出し、末尾の .0 を落とす（55.0 → 55）。"""
+    return f"{sum(values) / len(values):.1f}".rstrip("0").rstrip(".")
+
+
+def _sale_trend_section(game: dict) -> str:
+    """記録から計算できる「セールの傾向」の文章。数字はすべて記録のもの。
+
+    既存の要約（回数・最大割引率・最安値・各回の間隔）とは重ならない、
+    平均割引率・平均間隔・最初と最新のセール開始日を文章にする。
+    予想や今後の日程は含まない。
+    """
+    sales = game["sales"]
+    count = len(sales)
+    avg_discount = _average_text([s["discount"] for s in sales])
+    parts = [f"記録にある{count}回のセールの平均割引率は{avg_discount}%です。"]
+    gaps = [s.get("gap") for s in sales if s.get("gap") is not None]
+    if gaps:
+        parts.append(f"前のセールからの間隔は平均{_average_text(gaps)}日でした。")
+    first_start, latest_start = sales[0].get("start"), sales[-1].get("start")
+    if first_start is not None and latest_start is not None:
+        parts.append(f"最初のセールは{japanese_date(first_start)}に、"
+                     f"最新のセールは{japanese_date(latest_start)}に始まっています。")
+    return f"""
+        <section class="sale-trend">
+            <div class="section-title"><h2>セールの傾向</h2></div>
+            <p>{''.join(parts)}</p>
+        </section>"""
+
+
 def _related_treatment_games(gid: str, game: dict, game_pages: dict, limit: int = 3) -> list:
     """直す側の中で、記録上の最大割引率とセール回数が近いゲームを返す。
 
@@ -158,6 +188,8 @@ def game_page_extra_sections(gid, game: dict = None, game_pages: dict = None) ->
         </nav>
         <script type="application/ld+json">{_breadcrumb_json_ld(gid, title)}</script>"""
     sections = [breadcrumb]
+    if game.get("sales"):
+        sections.append(_sale_trend_section(game))
     related = _related_treatment_games(gid, game, game_pages)
     if related:
         items = "".join(

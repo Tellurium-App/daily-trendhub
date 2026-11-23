@@ -298,16 +298,27 @@ class GamePagesTest(unittest.TestCase):
         # 比べる側14本はすべて空のまま。
         for gid in agg.CONTROL_GAME_IDS:
             self.assertEqual(agg.game_page_extra_sections(gid, game), [])
-        # 直す側はパンくず＋JSON-LDを1断片だけ返す。
+        # 直す側はパンくず＋セールの傾向の2断片（内部リンクは game_pages 必須）。
         for gid in ("32470", "100"):
             sections = agg.game_page_extra_sections(gid, game)
-            self.assertEqual(len(sections), 1)
+            self.assertEqual(len(sections), 2)
             self.assertIn("BreadcrumbList", sections[0])
             self.assertIn('aria-label="パンくずリスト"', sections[0])
             self.assertIn('href="/game/steam/"', sections[0])
+            self.assertIn("セールの傾向", sections[1])
         # タイトルが無ければ何も足さない。
         self.assertEqual(agg.game_page_extra_sections("32470", None), [])
         self.assertEqual(agg.game_page_extra_sections("32470", {}), [])
+
+    def test_pr1_sale_trend_section_uses_only_recorded_numbers(self):
+        game = self.pages()["100"]  # 2回、割引率50%・60%、間隔20日
+        sections = agg.game_page_extra_sections("32470", game)
+        trend = sections[1]
+        self.assertIn("記録にある2回のセールの平均割引率は55%です。", trend)
+        self.assertIn("前のセールからの間隔は平均20日でした。", trend)
+        self.assertIn("最初のセールは2026年9月1日に、最新のセールは2026年10月1日に始まっています。", trend)
+        # 比べる側には出ない。
+        self.assertEqual(agg.game_page_extra_sections("2246340", game), [])
 
     def test_pr1_breadcrumb_json_ld_matches_visible_breadcrumb(self):
         game = self.pages()["100"]
@@ -362,19 +373,19 @@ class GamePagesTest(unittest.TestCase):
     def test_pr1_related_links_only_within_treatment(self):
         pages = self.pages()
         game = pages["100"]
-        # game_pages を渡さなければ内部リンクは出ない（パンくずだけ）。
-        self.assertEqual(len(agg.game_page_extra_sections("100", game)), 1)
-        # 直す側はパンくず＋内部リンクの2断片。リンク先は直す側の「300」だけ。
+        # game_pages を渡さなければ内部リンクは出ない（パンくず＋傾向の2断片）。
+        self.assertEqual(len(agg.game_page_extra_sections("100", game)), 2)
+        # 直す側はパンくず＋傾向＋内部リンクの3断片。リンク先は直す側の「300」だけ。
         sections = agg.game_page_extra_sections("100", game, pages)
-        self.assertEqual(len(sections), 2)
-        self.assertIn("/game/steam/app/300/", sections[1])
-        self.assertNotIn("/game/steam/app/100/", sections[1])  # 自分自身へは張らない
-        self.assertIn("セールの傾向が近いゲーム", sections[1])
+        self.assertEqual(len(sections), 3)
+        self.assertIn("/game/steam/app/300/", sections[2])
+        self.assertNotIn("/game/steam/app/100/", sections[2])  # 自分自身へは張らない
+        self.assertIn("セールの傾向が近いゲーム", sections[2])
         # 比べる側は game_pages を渡しても空のまま。
         self.assertEqual(agg.game_page_extra_sections("2246340", game, pages), [])
         # 直す側「300」からは「100」へ張られる。
         self.assertIn("/game/steam/app/100/",
-                      agg.game_page_extra_sections("300", pages["300"], pages)[1])
+                      agg.game_page_extra_sections("300", pages["300"], pages)[2])
 
     def test_pr1_related_links_choose_closest_discount_and_count(self):
         def fake(title, discounts):
@@ -389,7 +400,7 @@ class GamePagesTest(unittest.TestCase):
             "2246340": fake("Control", [51, 51]),     # 比べる側：候補に入れない
         }
         sections = agg.game_page_extra_sections("100", cur, pages)
-        links = re.findall(r'href="(/game/steam/app/[0-9]+/)"', sections[1])
+        links = re.findall(r'href="(/game/steam/app/[0-9]+/)"', sections[2])
         self.assertEqual(links, ["/game/steam/app/300/", "/game/steam/app/400/",
                                  "/game/steam/app/500/"])
         self.assertNotIn("/game/steam/app/2246340/", sections[1])

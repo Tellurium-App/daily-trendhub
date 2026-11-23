@@ -234,6 +234,57 @@ class GamePagesTest(unittest.TestCase):
         self.assertEqual(self.archive.read_text(), "PAST_SENTINEL")
         self.assertEqual(self.month.read_text(), "MONTH_SENTINEL")
 
+    def test_control_game_ids_are_exactly_the_criteria_14(self):
+        expected = {
+            "2246340", "1364780", "1623730", "251570", "252490", "3240220",
+            "3241660", "381210", "692569", "739630", "990080", "2050650",
+            "1687950", "3375780",
+        }
+        self.assertEqual(set(agg.CONTROL_GAME_IDS), expected)
+        self.assertEqual(len(agg.CONTROL_GAME_IDS), 14)
+
+    def test_treatment_game_ids_do_not_overlap_control(self):
+        treatment = {
+            "32470", "78920", "275850", "489830", "648800", "1086940",
+            "1091500", "1203620", "1462040", "1478500", "1771300", "1808500",
+            "1817070", "1984270", "2060160", "2138330", "2161700", "2215430",
+            "2399830", "2406770", "2455640", "2483190", "2552430", "2651280",
+            "2679460", "2909400", "3101040", "3321460", "3357650", "3527290",
+            "3768760", "3892270", "4001890", "4108000", "4594150", "4656000",
+        }
+        self.assertEqual(len(treatment), 36)
+        self.assertFalse(treatment & set(agg.CONTROL_GAME_IDS))
+        for gid in treatment:
+            self.assertTrue(agg.is_treatment_game(gid))
+            self.assertFalse(agg.is_control_game(gid))
+        for gid in agg.CONTROL_GAME_IDS:
+            self.assertTrue(agg.is_control_game(gid))
+            self.assertFalse(agg.is_treatment_game(gid))
+
+    def test_game_group_helpers_accept_str_and_int(self):
+        for gid in ("2246340", 2246340, " 2246340 "):
+            self.assertTrue(agg.is_control_game(gid))
+            self.assertFalse(agg.is_treatment_game(gid))
+        for gid in ("32470", 32470):
+            self.assertTrue(agg.is_treatment_game(gid))
+            self.assertFalse(agg.is_control_game(gid))
+        # 新しくできたページ（比べる側に無いID）は直す側になる。
+        self.assertTrue(agg.is_treatment_game("9999999"))
+
+    def test_pr0_extra_sections_are_empty_for_both_groups(self):
+        game = self.pages()["100"]
+        for gid in ("2246340", "32470", "100"):
+            self.assertEqual(agg.game_page_extra_sections(gid, game), [])
+        # 分岐を通っても出力は変わらない：同じゲームを比べる側ID・直す側IDで
+        # 生成し、canonical URL（gidで決まる）以外が同一であること。
+        control = agg.build_game_page(game, str(self.docs), self.today, "2246340")
+        treatment = agg.build_game_page(game, str(self.docs), self.today, "32470")
+        self.assertEqual(
+            control.replace("/game/steam/app/2246340/", "/game/steam/app/GID/"),
+            treatment.replace("/game/steam/app/32470/", "/game/steam/app/GID/"),
+        )
+        self.assertNotIn("BreadcrumbList", control + treatment)
+
     def test_python_311_syntax_and_stylesheet_template_match(self):
         source = Path(agg.__file__).read_text(encoding="utf-8")
         tree = ast.parse(source, feature_version=(3, 11))

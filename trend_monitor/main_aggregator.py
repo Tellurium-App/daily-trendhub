@@ -60,6 +60,42 @@ SALE_GAP_DAYS = 10
 # 複数回のセールを比較できるゲームだけ、個別の履歴ページを作る。
 GAME_PAGE_MIN_SALES = 2
 
+# ゲーム別ページの群分け（CRITERIA.md「対象」より。実験の比べる側14本）。
+# PR0では群分けだけを導入し、出力は変えない。比べる側に含まれないゲーム
+# （直す側36本、および期間中に新しくできたページ）は直す側の作り方で出す。
+CONTROL_GAME_IDS = frozenset({
+    "2246340", "1364780", "1623730", "251570", "252490", "3240220",
+    "3241660", "381210", "692569", "739630", "990080", "2050650",
+    "1687950", "3375780",
+})
+
+
+def _normalize_game_id(gid) -> str:
+    """SteamアプリIDを文字列に正規化する（str/intどちらも受け付ける）。"""
+    return str(gid).strip()
+
+
+def is_control_game(gid) -> bool:
+    """比べる側（CRITERIA.mdの14本）のゲームかどうかを返す。"""
+    return _normalize_game_id(gid) in CONTROL_GAME_IDS
+
+
+def is_treatment_game(gid) -> bool:
+    """直す側のゲームかどうかを返す。比べる側以外はすべて直す側とする。"""
+    return not is_control_game(gid)
+
+
+def game_page_extra_sections(gid, game: dict = None) -> list:
+    """直す側だけに追加するセクションのHTML断片の並びを返す。
+
+    PR0では両群とも空（出力は変わらない）。PR1以降で、直す側だけの
+    要素（例：パンくずの構造化データ）をここに足す。比べる側は
+    常に空のままにする。
+    """
+    if is_control_game(gid):
+        return []
+    return []
+
 # 月間ランキングの掲載件数
 MONTHLY_TOP_N = 10
 
@@ -304,6 +340,12 @@ def build_game_page(game: dict, docs_dir: str, today: datetime.date, gid: str) -
                 <a href="/game/steam/" class="btn btn-secondary">Steamセール一覧に戻る</a>
             </div>
         </section>"""
+    # PR0の群分け：直す側だけの追加セクションをここでつなぐ。
+    # game_page_extra_sections() は現状、両群とも空の並びを返すため
+    # 出力は変わらない（PR1以降で直す側だけに要素を足す）。
+    extra_sections = game_page_extra_sections(gid, game)
+    if extra_sections:
+        content += "".join(extra_sections)
     title = game["title"]
     max_discount = max(s["discount"] for s in sales)
     low = lowest_sale(sales)

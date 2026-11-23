@@ -178,7 +178,14 @@ def game_page_extra_sections(gid, game: dict = None, game_pages: dict = None) ->
     if not title:
         return []
     esc_title = html.escape(title)
+    # パンくずのリンク色は、サイト内のほかのリンクと同じ決まり
+    # （.ranking-table a / .archive-list a：color: var(--text-primary)、
+    # ホバーで var(--accent-cyan)）に合わせる。色を指定しないと既定の青に
+    # なり、暗い背景（--bg-dark: #0f111a）でほとんど読めない。
+    # CSSテンプレートを変えると docs/style.css との一致が崩れるため、
+    # 直す側だけに出るこの断片の中に <style> を置く。比べる側には出ない。
     breadcrumb = f"""
+        <style>.breadcrumb a{{color:var(--text-primary);text-decoration:none}}.breadcrumb a:hover{{color:var(--accent-cyan)}}</style>
         <nav class="breadcrumb" aria-label="パンくずリスト" style="font-size: 0.9rem; margin-bottom: 16px;">
             <ol style="list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 0.4em;">
                 <li><a href="/">トップ</a></li><li aria-hidden="true">/</li>

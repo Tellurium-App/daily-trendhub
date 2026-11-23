@@ -338,6 +338,21 @@ class GamePagesTest(unittest.TestCase):
         # パンくずは <main> の先頭（セール履歴の節より前）に出る。
         self.assertLess(page.index("パンくずリスト"), page.index('class="game-history"'))
 
+    def test_fix1_breadcrumb_links_use_site_link_color(self):
+        game = self.pages()["100"]
+        sections = agg.game_page_extra_sections("32470", game)
+        breadcrumb = sections[0]
+        # サイト内のほかのリンクと同じ決まり：基本色は --text-primary、
+        # ホバーで --accent-cyan（.ranking-table a / .archive-list a と同じ）。
+        self.assertIn(".breadcrumb a{color:var(--text-primary)", breadcrumb)
+        self.assertIn(".breadcrumb a:hover{color:var(--accent-cyan)}", breadcrumb)
+        # 生成したページにも同じ決まりが入る。比べる側には出ない。
+        treatment = agg.build_game_page(game, str(self.docs), self.today, "32470")
+        self.assertIn(".breadcrumb a{color:var(--text-primary)", treatment)
+        control = agg.build_game_page(game, str(self.docs), self.today, "2246340")
+        self.assertNotIn(".breadcrumb a", control)
+        self.assertNotIn("パンくずリスト", control)
+
     def test_pr1_title_date_removed_only_for_treatment(self):
         game = self.pages()["100"]
         control = agg.build_game_page(game, str(self.docs), self.today, "2246340")

@@ -92,8 +92,13 @@ class SiteNameTest(unittest.TestCase):
         ):
             self.assertIn(line, after)
 
-    def test_game_pages_have_no_json_ld(self):
-        """ゲーム別ページには JSON-LD が出ない。"""
+    def test_game_pages_have_no_website_json_ld(self):
+        """ゲーム別ページに WebSite の JSON-LD が出ない。
+
+        サイト名の構造化データはトップページだけのもので、ほかのページに
+        漏れていないことを確かめる。パンくずの BreadcrumbList の JSON-LD
+        （PR #2 で直す側のページに入る）は、このテストでは問題にしない。
+        """
         game = {
             "title": "テストゲーム",
             "url": "https://store.steampowered.com/app/100/",
@@ -108,8 +113,11 @@ class SiteNameTest(unittest.TestCase):
         }
         with tempfile.TemporaryDirectory() as docs_dir:
             page = agg.build_game_page(game, docs_dir, dt.date(2026, 10, 2), "100")
-        self.assertNotIn("application/ld+json", page)
-        self.assertNotIn("schema.org", page)
+        self.assertNotIn('"@type": "WebSite"', page)
+        for match in re.finditer(
+            r'<script type="application/ld\+json">(.*?)</script>', page, re.DOTALL
+        ):
+            self.assertNotEqual(json.loads(match.group(1)).get("@type"), "WebSite")
 
 
 if __name__ == "__main__":

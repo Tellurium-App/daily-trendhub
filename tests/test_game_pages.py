@@ -325,6 +325,41 @@ class GamePagesTest(unittest.TestCase):
             stripped.replace("/game/steam/app/32470/", "/game/steam/app/GID/"),
         )
 
+    def test_pr1_related_links_only_within_treatment(self):
+        pages = self.pages()
+        game = pages["100"]
+        # game_pages を渡さなければ内部リンクは出ない（パンくずだけ）。
+        self.assertEqual(len(agg.game_page_extra_sections("100", game)), 1)
+        # 直す側はパンくず＋内部リンクの2断片。リンク先は直す側の「300」だけ。
+        sections = agg.game_page_extra_sections("100", game, pages)
+        self.assertEqual(len(sections), 2)
+        self.assertIn("/game/steam/app/300/", sections[1])
+        self.assertNotIn("/game/steam/app/100/", sections[1])  # 自分自身へは張らない
+        self.assertIn("セールの傾向が近いゲーム", sections[1])
+        # 比べる側は game_pages を渡しても空のまま。
+        self.assertEqual(agg.game_page_extra_sections("2246340", game, pages), [])
+        # 直す側「300」からは「100」へ張られる。
+        self.assertIn("/game/steam/app/100/",
+                      agg.game_page_extra_sections("300", pages["300"], pages)[1])
+
+    def test_pr1_related_links_choose_closest_discount_and_count(self):
+        def fake(title, discounts):
+            return {"title": title,
+                    "sales": [{"discount": d} for d in discounts]}
+        cur = fake("Cur", [50, 50])
+        pages = {
+            "100": cur,
+            "300": fake("NearCount", [50, 50, 50]),   # 割引率差0・回数差1
+            "400": fake("NearDisc", [52, 52]),        # 割引率差2・回数差0
+            "500": fake("Far", [40, 40]),             # 割引率差10
+            "2246340": fake("Control", [51, 51]),     # 比べる側：候補に入れない
+        }
+        sections = agg.game_page_extra_sections("100", cur, pages)
+        links = re.findall(r'href="(/game/steam/app/[0-9]+/)"', sections[1])
+        self.assertEqual(links, ["/game/steam/app/300/", "/game/steam/app/400/",
+                                 "/game/steam/app/500/"])
+        self.assertNotIn("/game/steam/app/2246340/", sections[1])
+
     def test_pr1_treatment_counts_prices_match_records(self):
         self.generate()
         page = self.generated_html()  # gid "100" は比べる側に無いので直す側

@@ -104,12 +104,43 @@ def _breadcrumb_json_ld(gid: str, title: str) -> str:
             .replace("<", "\\u003c").replace(">", "\\u003e").replace("&", "\\u0026"))
 
 
-def game_page_extra_sections(gid, game: dict = None) -> list:
+def _related_treatment_games(gid: str, game: dict, game_pages: dict, limit: int = 3) -> list:
+    """直す側の中で、記録上の最大割引率とセール回数が近いゲームを返す。
+
+    選び方は記録から計算できるものだけ（最大割引率の近さ、次にセール回数の
+    近さ、最後にアプリIDの近さ）。比べる側は候補に入れない。自分自身も除く。
+    ジャンル・開発元・発売日など記録に無い属性では選ばない。
+    """
+    if not game_pages or not game.get("sales"):
+        return []
+    cur_max = max(s["discount"] for s in game["sales"])
+    cur_count = len(game["sales"])
+    candidates = []
+    for other_gid, other in game_pages.items():
+        if _normalize_game_id(other_gid) == _normalize_game_id(gid):
+            continue
+        if is_control_game(other_gid) or not other.get("sales"):
+            continue
+        other_max = max(s["discount"] for s in other["sales"])
+        other_count = len(other["sales"])
+        try:
+            id_gap = abs(int(other_gid) - int(gid))
+        except (TypeError, ValueError):
+            id_gap = 0
+        candidates.append((abs(other_max - cur_max), abs(other_count - cur_count),
+                           id_gap, str(other_gid), other))
+    candidates.sort(key=lambda c: (c[0], c[1], c[2], c[3]))
+    return [(other_gid, other) for _, _, _, other_gid, other in candidates[:limit]]
+
+
+def game_page_extra_sections(gid, game: dict = None, game_pages: dict = None) -> list:
     """直す側だけに追加するセクションのHTML断片の並びを返す。
 
     PR1：直す側だけに、目に見えるパンくずリストと BreadcrumbList の
     JSON-LD を返す。比べる側は常に空のままにする。タイトルが無ければ
     （game が無い場合など）何も返さない。
+    束ね改善：直す側の中だけで張る「セールの傾向が近いゲーム」の
+    内部リンクも返す（game_pages が渡された場合のみ）。
     """
     if is_control_game(gid):
         return []
@@ -126,7 +157,21 @@ def game_page_extra_sections(gid, game: dict = None) -> list:
             </ol>
         </nav>
         <script type="application/ld+json">{_breadcrumb_json_ld(gid, title)}</script>"""
-    return [breadcrumb]
+    sections = [breadcrumb]
+    related = _related_treatment_games(gid, game, game_pages)
+    if related:
+        items = "".join(
+            f'<li><a href="/{game_rel_path(other_gid)}">{html.escape(other["title"])}'
+            f'（記録上{len(other["sales"])}回・最大{max(s["discount"] for s in other["sales"])}%OFF）</a></li>'
+            for other_gid, other in related
+        )
+        sections.append(f"""
+        <section class="related-games">
+            <div class="section-title"><h2>セールの傾向が近いゲーム</h2></div>
+            <p>記録上の最大割引率とセール回数が近い、ほかのゲームです。</p>
+            <ul class="archive-list">{items}</ul>
+        </section>""")
+    return sections
 
 # 月間ランキングの掲載件数
 MONTHLY_TOP_N = 10
@@ -330,7 +375,8 @@ def game_summary(game: dict) -> str:
     return "".join(parts)
 
 
-def build_game_page(game: dict, docs_dir: str, today: datetime.date, gid: str) -> str:
+def build_game_page(game: dict, docs_dir: str, today: datetime.date, gid: str,
+                    game_pages: dict = None) -> str:
     """記録上のセール履歴。価格は各回の最終掲載日の行を使う。"""
     sales = game["sales"]
     latest = sales[-1]
@@ -375,7 +421,7 @@ def build_game_page(game: dict, docs_dir: str, today: datetime.date, gid: str) -
     # PR1の群分け：直す側だけの追加セクションを、<main> の先頭に出す。
     # パンくずはページの先頭にあるのが自然なため、末尾ではなく先頭に置く。
     # 比べる側は game_page_extra_sections() が空の並びを返すので、出力は変わらない。
-    extra_sections = game_page_extra_sections(gid, game)
+    extra_sections = game_page_extra_sections(gid, game, game_pages)
     if extra_sections:
         content = "".join(extra_sections) + content
     title = game["title"]
@@ -402,7 +448,7 @@ def write_game_pages(csv_path: str, docs_dir: str, today: datetime.date = None,
         path = os.path.join(docs_dir, *game_rel_path(gid).strip("/").split("/"), "index.html")
         os.makedirs(os.path.dirname(path), exist_ok=True)
         with open(path, "w", encoding="utf-8") as f:
-            f.write(build_game_page(game, docs_dir, today, gid))
+            f.write(build_game_page(game, docs_dir, today, gid, game_pages=pages))
     return pages
 
 

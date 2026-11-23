@@ -5,6 +5,7 @@ import csv
 import datetime
 import glob
 import html
+import json
 import re
 import sys
 import urllib.parse
@@ -706,12 +707,32 @@ SITE_SUBTITLE = ("Steamのセール・売上上位ゲーム、Epic Gamesの無�
                  "放送中アニメの話題作、ガジェット系メディアの新着ニュースを毎日自動集計してお届けする情報サイトです。")
 
 
+def website_json_ld() -> str:
+    """トップページだけに出す WebSite の構造化データ（JSON-LD）。
+
+    Google の検索結果に出るサイト名を「TrendHub」にするためのもの。
+    検索ボックスなどの項目は足さない。通信はしない。
+    """
+    data = {
+        "@context": "https://schema.org",
+        "@type": "WebSite",
+        "name": "TrendHub",
+        "alternateName": ["Daily TrendHub", "Trend Hub"],
+        "url": f"{SITE_BASE_URL}/",
+    }
+    return (
+        '<script type="application/ld+json">'
+        + json.dumps(data, ensure_ascii=False)
+        + "</script>"
+    )
+
+
 def build_page(title: str, description: str, canonical_url: str, heading: str,
                date_label: str, game_cards_html: str, gadget_cards_html: str,
                archive_html: str, depth: int, pick_html: str = "",
                about_html: str = "", anime_cards_html: str = "",
                free_html: str = "", only: str = "", game_pages: dict = None,
-               subtitle: str = None) -> str:
+               subtitle: str = None, structured_data: str = "") -> str:
     """1ページ分のHTMLを組み立てます。depth はサイトルートからの階層の深さ。
 
     only に GENRE_PAGES のキーを渡すと、そのジャンルの節だけを出す（ジャンル別ページ用）。
@@ -790,6 +811,10 @@ def build_page(title: str, description: str, canonical_url: str, heading: str,
         for key, path, label in GENRE_PAGES
     )
 
+    # structured_data を渡さない呼び出し（日別・月間・ジャンル別・ゲーム別・
+    # About）は、ここが空文字のままになり、出力は1文字も変わらない。
+    structured_data_html = f"\n    {structured_data}" if structured_data else ""
+
     return f"""<!DOCTYPE html>
 <html lang="ja">
 <head>
@@ -804,7 +829,7 @@ def build_page(title: str, description: str, canonical_url: str, heading: str,
     <meta property="og:title" content="{esc_title}">
     <meta property="og:description" content="{esc_desc}">
     <meta property="og:url" content="{canonical_url}">
-    <meta name="twitter:card" content="summary">
+    <meta name="twitter:card" content="summary">{structured_data_html}
     <link rel="stylesheet" href="{prefix}style.css">
 </head>
 <body>
@@ -1263,6 +1288,7 @@ def aggregate_and_draft():
         anime_cards_html=anime_joined,
         free_html=free_html,
         game_pages=game_pages,
+        structured_data=website_json_ld(),
     )
 
     archive_page_html = build_page(

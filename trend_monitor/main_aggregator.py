@@ -208,6 +208,31 @@ def _related_treatment_games(gid: str, game: dict, game_pages: dict) -> list:
             if target in game_pages]
 
 
+# 直す側だけのスマホ用セール履歴表の見た目（修正4）。
+# 共通のCSSテンプレートや .ranking-table / .game-history-table の決まりは
+# 変えない。直す側の節だけに付く .treatment-history に限って効く。
+# 640px以下では表を見出し行なしの積み重ね表示にし、6列すべての数字を
+# 横スクロールなしで読めるようにする。見出しの文言は ::before の content
+# で補い、セルの数字そのものは変えない。
+_TREATMENT_MOBILE_TABLE_CSS = """
+@media (max-width:640px){
+.treatment-history .table-wrap{overflow-x:visible}
+.treatment-history .game-history-table{min-width:0;width:100%;display:block}
+.treatment-history .game-history-table thead{display:none}
+.treatment-history .game-history-table tbody{display:block}
+.treatment-history .game-history-table tr{display:block;border:1px solid var(--card-border);border-radius:12px;margin-bottom:12px;padding:2px 0}
+.treatment-history .game-history-table th,.treatment-history .game-history-table td{display:flex;justify-content:space-between;align-items:baseline;gap:12px;padding:8px 14px;border-bottom:1px solid var(--card-border);text-align:right;white-space:normal}
+.treatment-history .game-history-table tr>:last-child{border-bottom:0}
+.treatment-history .game-history-table th::before,.treatment-history .game-history-table td::before{flex:none;color:var(--text-secondary);font-weight:600;font-size:.85rem;text-align:left}
+.treatment-history .game-history-table th[scope="row"]::before{content:"回"}
+.treatment-history .game-history-table td:nth-child(2)::before{content:"期間"}
+.treatment-history .game-history-table td:nth-child(3)::before{content:"掲載された日数"}
+.treatment-history .game-history-table td:nth-child(4)::before{content:"最大割引率"}
+.treatment-history .game-history-table td:nth-child(5)::before{content:"その回の価格"}
+.treatment-history .game-history-table td:nth-child(6)::before{content:"前のセールからの間隔"}
+}"""
+
+
 def game_page_extra_sections(gid, game: dict = None, game_pages: dict = None) -> list:
     """直す側だけにページの先頭へ追加するセクションのHTML断片の並びを返す。
 
@@ -229,7 +254,7 @@ def game_page_extra_sections(gid, game: dict = None, game_pages: dict = None) ->
     # CSSテンプレートを変えると docs/style.css との一致が崩れるため、
     # 直す側だけに出るこの断片の中に <style> を置く。比べる側には出ない。
     breadcrumb = f"""
-        <style>.breadcrumb a{{color:var(--text-primary);text-decoration:none}}.breadcrumb a:hover{{color:var(--accent-cyan)}}</style>
+        <style>.breadcrumb a{{color:var(--text-primary);text-decoration:none}}.breadcrumb a:hover{{color:var(--accent-cyan)}}{_TREATMENT_MOBILE_TABLE_CSS}</style>
         <nav class="breadcrumb" aria-label="パンくずリスト" style="font-size: 0.9rem; margin-bottom: 16px;">
             <ol style="list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 0.4em;">
                 <li><a href="/">トップ</a></li><li aria-hidden="true">/</li>
@@ -498,8 +523,13 @@ def build_game_page(game: dict, docs_dir: str, today: datetime.date, gid: str,
             label = f'<a href="/{start_path}">{label}</a>'
         daily_links.append(f"<li>{label}</li>")
     record_start = japanese_date(game["record_start"])
+    # 直す側の節だけに目印のクラスを付ける。スマホ用の表の見た目（修正4）
+    # はこの目印に限って効く。比べる側は従来のクラス名のままで、出力は
+    # 1文字も変わらない。
+    history_class = ("game-history treatment-history" if is_treatment_game(gid)
+                     else "game-history")
     content = f"""
-        <section class="game-history">
+        <section class="{history_class}">
             <p class="sale-status">{status}</p>
             <div class="table-wrap" tabindex="0" role="region" aria-label="セール履歴の表">
                 <table class="ranking-table game-history-table">

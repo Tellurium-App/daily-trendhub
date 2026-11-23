@@ -447,6 +447,44 @@ class GamePagesTest(unittest.TestCase):
                                  "/game/steam/app/500/"])
         self.assertNotIn("/game/steam/app/2246340/", sections[0])
 
+    def test_fix3_every_treatment_page_receives_at_least_one_link(self):
+        def fake(title, discounts):
+            return {"title": title,
+                    "sales": [{"discount": d} for d in discounts]}
+        # 割引率が近い5本の集まりと、どれからも遠い1本（900）。
+        # 類似度トップ3だけでは900はどこからも選ばれない。
+        pages = {
+            "100": fake("A", [50, 50]),
+            "200": fake("B", [51, 51]),
+            "300": fake("C", [52, 52]),
+            "400": fake("D", [50]),
+            "500": fake("E", [53, 53, 53]),
+            "900": fake("Far", [90]),
+            "2246340": fake("Control", [51, 51]),  # 比べる側：候補に入れない
+        }
+        link_map = agg._treatment_related_map(pages)
+        indegree = {gid: 0 for gid in link_map}
+        for targets in link_map.values():
+            for target in targets:
+                indegree[target] += 1
+        # 直す側6本すべてが少なくとも1本のリンクを受けている。
+        for gid in ("100", "200", "300", "400", "500", "900"):
+            self.assertGreaterEqual(indegree[gid], 1, gid)
+        # 1ページの出しリンクは最大4本。比べる側へのリンクは無い。
+        for gid, targets in link_map.items():
+            self.assertLessEqual(len(targets), 4, gid)
+            self.assertNotIn(gid, targets)  # 自分自身へは張らない
+            self.assertNotIn("2246340", targets)
+        self.assertNotIn("2246340", link_map)
+        # 900は補完でどこかのリンク先に入っている。
+        self.assertIn("900", [t for targets in link_map.values() for t in targets])
+        # 生成したページにも、900へのリンクがどこかにある。
+        found = any(
+            "/game/steam/app/900/" in sec
+            for gid in ("100", "200", "300", "400", "500", "900")
+            for sec in agg.game_page_bottom_sections(gid, pages[gid], pages))
+        self.assertTrue(found)
+
     def test_pr1_treatment_counts_prices_match_records(self):
         self.generate()
         page = self.generated_html()  # gid "100" は比べる側に無いので直す側

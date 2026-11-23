@@ -134,33 +134,78 @@ def _sale_trend_section(game: dict) -> str:
         </section>"""
 
 
-def _related_treatment_games(gid: str, game: dict, game_pages: dict, limit: int = 3) -> list:
-    """直す側の中で、記録上の最大割引率とセール回数が近いゲームを返す。
+def _similarity_key(gid: str, game: dict, other_gid: str, other: dict) -> tuple:
+    """記録から計算できる類似度の並べ替えキー。最大割引率の近さ、次に
+    セール回数の近さ、最後にアプリIDの近さ。ジャンルなど記録に無い属性は
+    使わない。"""
+    cur_max = max(s["discount"] for s in game["sales"])
+    cur_count = len(game["sales"])
+    other_max = max(s["discount"] for s in other["sales"])
+    other_count = len(other["sales"])
+    try:
+        id_gap = abs(int(other_gid) - int(gid))
+    except (TypeError, ValueError):
+        id_gap = 0
+    return (abs(other_max - cur_max), abs(other_count - cur_count),
+            id_gap, str(other_gid))
 
-    選び方は記録から計算できるものだけ（最大割引率の近さ、次にセール回数の
-    近さ、最後にアプリIDの近さ）。比べる側は候補に入れない。自分自身も除く。
-    ジャンル・開発元・発売日など記録に無い属性では選ばない。
+
+def _treatment_related_map(game_pages: dict) -> dict:
+    """直す側全ページの内部リンク先マップ（gid → リンク先gidの並び）。
+
+    1段階目：各ページが類似度のトップ3を選ぶ。2段階目：どこからも選ばれ
+    なかったページ（受けリンク0本）を、類似度が最も近く出しリンクが
+    4本未満のページのリンク先に加える。アプリID順に処理して決定的にする。
+    結果として全ページの受けリンクは1本以上、1ページの出しリンクは最大
+    4本になる。リンク先は直す側だけで、自分自身は含まない。
+    """
+    treatment = {str(g): other for g, other in game_pages.items()
+                 if is_treatment_game(g) and other.get("sales")}
+    ranked = {}
+    for gid, game in treatment.items():
+        candidates = sorted((o for o in treatment if o != gid),
+                            key=lambda o: _similarity_key(gid, game, o, treatment[o]))
+        ranked[gid] = candidates[:3]
+    indegree = {gid: 0 for gid in treatment}
+    for targets in ranked.values():
+        for target in targets:
+            indegree[target] += 1
+    for orphan in sorted((g for g, n in indegree.items() if n == 0),
+                         key=lambda g: (int(g) if g.isdigit() else 0, g)):
+        hosts = sorted(
+            (h for h in treatment if h != orphan),
+            key=lambda h: (_similarity_key(h, treatment[h], orphan, treatment[orphan])[:3]
+                           + (len(ranked[h]), h)))
+        host = next((h for h in hosts if len(ranked[h]) < 4), hosts[0])
+        ranked[host].append(orphan)
+        indegree[orphan] += 1
+    return ranked
+
+
+def _related_treatment_games(gid: str, game: dict, game_pages: dict) -> list:
+    """直す側の中で、gid のページがリンクするゲームの並びを返す。
+
+    選び方は _treatment_related_map() に従う（類似度トップ3に、受けリンク
+    0本のページへの補完を加えたもの）。比べる側は候補に入れない。
+    自分自身も除く。
     """
     if not game_pages or not game.get("sales"):
         return []
-    cur_max = max(s["discount"] for s in game["sales"])
-    cur_count = len(game["sales"])
-    candidates = []
-    for other_gid, other in game_pages.items():
-        if _normalize_game_id(other_gid) == _normalize_game_id(gid):
-            continue
-        if is_control_game(other_gid) or not other.get("sales"):
-            continue
-        other_max = max(s["discount"] for s in other["sales"])
-        other_count = len(other["sales"])
-        try:
-            id_gap = abs(int(other_gid) - int(gid))
-        except (TypeError, ValueError):
-            id_gap = 0
-        candidates.append((abs(other_max - cur_max), abs(other_count - cur_count),
-                           id_gap, str(other_gid), other))
-    candidates.sort(key=lambda c: (c[0], c[1], c[2], c[3]))
-    return [(other_gid, other) for _, _, _, other_gid, other in candidates[:limit]]
+    gid = _normalize_game_id(gid)
+    link_map = _treatment_related_map(game_pages)
+    if gid in link_map:
+        targets = link_map[gid]
+    else:
+        # game_pages に含まれないページ（テスト用の架空IDなど）は、
+        # 類似度トップ3をその場で計算する。補完の対象にはならない。
+        candidates = sorted(
+            (o for o, other in game_pages.items()
+             if is_treatment_game(o) and other.get("sales")
+             and _normalize_game_id(o) != gid),
+            key=lambda o: _similarity_key(gid, game, str(o), game_pages[o]))
+        targets = [str(o) for o in candidates[:3]]
+    return [(target, game_pages[target]) for target in targets
+            if target in game_pages]
 
 
 def game_page_extra_sections(gid, game: dict = None, game_pages: dict = None) -> list:

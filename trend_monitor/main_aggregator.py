@@ -5,6 +5,7 @@ import csv
 import datetime
 import glob
 import html
+import json
 import re
 import sys
 import urllib.parse
@@ -85,16 +86,47 @@ def is_treatment_game(gid) -> bool:
     return not is_control_game(gid)
 
 
+def _breadcrumb_json_ld(gid: str, title: str) -> str:
+    """BreadcrumbList の JSON-LD。階層は記録にあるものだけ：
+    トップ → Steamセール一覧 → このゲームのページ。"""
+    items = [
+        {"@type": "ListItem", "position": 1, "name": "トップ",
+         "item": f"{SITE_BASE_URL}/"},
+        {"@type": "ListItem", "position": 2, "name": "Steamセール",
+         "item": f"{SITE_BASE_URL}/game/steam/"},
+        {"@type": "ListItem", "position": 3, "name": title,
+         "item": f"{SITE_BASE_URL}/{game_rel_path(gid)}"},
+    ]
+    data = {"@context": "https://schema.org", "@type": "BreadcrumbList",
+            "itemListElement": items}
+    # </script> などで script 要素が壊れないよう、危険な文字を \u 逃げにする。
+    return (json.dumps(data, ensure_ascii=False)
+            .replace("<", "\\u003c").replace(">", "\\u003e").replace("&", "\\u0026"))
+
+
 def game_page_extra_sections(gid, game: dict = None) -> list:
     """直す側だけに追加するセクションのHTML断片の並びを返す。
 
-    PR0では両群とも空（出力は変わらない）。PR1以降で、直す側だけの
-    要素（例：パンくずの構造化データ）をここに足す。比べる側は
-    常に空のままにする。
+    PR1：直す側だけに、目に見えるパンくずリストと BreadcrumbList の
+    JSON-LD を返す。比べる側は常に空のままにする。タイトルが無ければ
+    （game が無い場合など）何も返さない。
     """
     if is_control_game(gid):
         return []
-    return []
+    title = (game or {}).get("title") or ""
+    if not title:
+        return []
+    esc_title = html.escape(title)
+    breadcrumb = f"""
+        <nav class="breadcrumb" aria-label="パンくずリスト" style="font-size: 0.9rem; margin-bottom: 16px;">
+            <ol style="list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 0.4em;">
+                <li><a href="/">トップ</a></li><li aria-hidden="true">/</li>
+                <li><a href="/game/steam/">Steamセール</a></li><li aria-hidden="true">/</li>
+                <li aria-current="page">{esc_title}</li>
+            </ol>
+        </nav>
+        <script type="application/ld+json">{_breadcrumb_json_ld(gid, title)}</script>"""
+    return [breadcrumb]
 
 # 月間ランキングの掲載件数
 MONTHLY_TOP_N = 10
@@ -340,12 +372,12 @@ def build_game_page(game: dict, docs_dir: str, today: datetime.date, gid: str) -
                 <a href="/game/steam/" class="btn btn-secondary">Steamセール一覧に戻る</a>
             </div>
         </section>"""
-    # PR0の群分け：直す側だけの追加セクションをここでつなぐ。
-    # game_page_extra_sections() は現状、両群とも空の並びを返すため
-    # 出力は変わらない（PR1以降で直す側だけに要素を足す）。
+    # PR1の群分け：直す側だけの追加セクションを、<main> の先頭に出す。
+    # パンくずはページの先頭にあるのが自然なため、末尾ではなく先頭に置く。
+    # 比べる側は game_page_extra_sections() が空の並びを返すので、出力は変わらない。
     extra_sections = game_page_extra_sections(gid, game)
     if extra_sections:
-        content += "".join(extra_sections)
+        content = "".join(extra_sections) + content
     title = game["title"]
     max_discount = max(s["discount"] for s in sales)
     low = lowest_sale(sales)

@@ -3,6 +3,8 @@ import contextlib
 import csv
 import datetime as dt
 import io
+import json
+import re
 from pathlib import Path
 import shutil
 import socket
@@ -271,19 +273,69 @@ class GamePagesTest(unittest.TestCase):
         # 新しくできたページ（比べる側に無いID）は直す側になる。
         self.assertTrue(agg.is_treatment_game("9999999"))
 
-    def test_pr0_extra_sections_are_empty_for_both_groups(self):
+    def test_pr1_extra_sections_breadcrumb_only_for_treatment(self):
         game = self.pages()["100"]
-        for gid in ("2246340", "32470", "100"):
+        # 比べる側14本はすべて空のまま。
+        for gid in agg.CONTROL_GAME_IDS:
             self.assertEqual(agg.game_page_extra_sections(gid, game), [])
-        # 分岐を通っても出力は変わらない：同じゲームを比べる側ID・直す側IDで
-        # 生成し、canonical URL（gidで決まる）以外が同一であること。
+        # 直す側はパンくず＋JSON-LDを1断片だけ返す。
+        for gid in ("32470", "100"):
+            sections = agg.game_page_extra_sections(gid, game)
+            self.assertEqual(len(sections), 1)
+            self.assertIn("BreadcrumbList", sections[0])
+            self.assertIn('aria-label="パンくずリスト"', sections[0])
+            self.assertIn('href="/game/steam/"', sections[0])
+        # タイトルが無ければ何も足さない。
+        self.assertEqual(agg.game_page_extra_sections("32470", None), [])
+        self.assertEqual(agg.game_page_extra_sections("32470", {}), [])
+
+    def test_pr1_breadcrumb_json_ld_matches_visible_breadcrumb(self):
+        game = self.pages()["100"]
+        page = agg.build_game_page(game, str(self.docs), self.today, "32470")
+        match = re.search(r'<script type="application/ld\+json">(.*?)</script>', page, re.DOTALL)
+        self.assertIsNotNone(match)
+        data = json.loads(match.group(1))
+        self.assertEqual(data["@type"], "BreadcrumbList")
+        items = data["itemListElement"]
+        self.assertEqual([(i["position"], i["name"]) for i in items],
+                         [(1, "トップ"), (2, "Steamセール"), (3, self.title)])
+        self.assertEqual(items[2]["item"], agg.SITE_BASE_URL + "/game/steam/app/32470/")
+        # 目に見えるパンくずも同じ階層で、現在地がタイトルになっている。
+        self.assertIn('<a href="/">トップ</a>', page)
+        self.assertIn('<a href="/game/steam/">Steamセール</a>', page)
+        self.assertIn('<li aria-current="page">A &amp; &lt;B&gt; &quot;C&quot;</li>', page)
+        # パンくずは <main> の先頭（セール履歴の節より前）に出る。
+        self.assertLess(page.index("パンくずリスト"), page.index('class="game-history"'))
+
+    def test_pr1_control_page_has_no_breadcrumb(self):
+        game = self.pages()["100"]
         control = agg.build_game_page(game, str(self.docs), self.today, "2246340")
         treatment = agg.build_game_page(game, str(self.docs), self.today, "32470")
+        self.assertNotIn("BreadcrumbList", control)
+        self.assertNotIn("パンくずリスト", control)
+        self.assertIn("BreadcrumbList", treatment)
+
+        # canonical URL（gidで決まる）以外、比べる側と直す側の違いは
+        # パンくず断片だけであること。断片そのものを除去して比べる。
+        sections = agg.game_page_extra_sections("32470", game)
+        self.assertEqual(len(sections), 1)
+        stripped = treatment.replace(sections[0], "", 1)
         self.assertEqual(
             control.replace("/game/steam/app/2246340/", "/game/steam/app/GID/"),
-            treatment.replace("/game/steam/app/32470/", "/game/steam/app/GID/"),
+            stripped.replace("/game/steam/app/32470/", "/game/steam/app/GID/"),
         )
-        self.assertNotIn("BreadcrumbList", control + treatment)
+
+    def test_pr1_treatment_counts_prices_match_records(self):
+        self.generate()
+        page = self.generated_html()  # gid "100" は比べる側に無いので直す側
+        game = self.pages()["100"]
+        self.assertIn("BreadcrumbList", page)
+        # 記録から数え直した回数・最大割引率・最安値がページの要約と一致する。
+        self.assertEqual(len(game["sales"]), 2)
+        self.assertEqual(max(s["discount"] for s in game["sales"]), 60)
+        low = agg.lowest_sale(game["sales"])
+        self.assertEqual(agg.yen_value(low["price"]), 850)
+        self.assertIn("記録上2回・最大60%OFF・最安値850円", page)
 
     def test_python_311_syntax_and_stylesheet_template_match(self):
         source = Path(agg.__file__).read_text(encoding="utf-8")

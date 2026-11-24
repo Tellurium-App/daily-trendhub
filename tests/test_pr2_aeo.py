@@ -153,6 +153,14 @@ class Pr2AeoTest(unittest.TestCase):
         self.assertIn("記録にある1回分で21日です", gap)
         self.assertEqual(gap.count("21日"), 1)
 
+    def test_faq_has_spacing_style_only_for_treatment(self):
+        # 問答の間の余白は、直す側だけに出る FAQ 断片の中のスタイルで付ける
+        self.generate()
+        page = self.generated_html("100")
+        self.assertIn(".faq .faq-item{margin:0 0 20px}", page)
+        control = self.generated_html("2246340")
+        self.assertNotIn("faq-item", control)
+
     def test_faq_has_no_next_sale_prediction(self):
         self.generate()
         page = self.generated_html("100")

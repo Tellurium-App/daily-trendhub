@@ -254,7 +254,11 @@ def _faq_json_ld(pairs: list) -> str:
 
 def _faq_section(game: dict, today: datetime.date) -> str:
     """直す側だけに出す「よくある質問」。質問と答えは _faq_pairs の組を
-    表示と JSON-LD の両方に使う（食い違いを防ぐ）。"""
+    表示と JSON-LD の両方に使う（食い違いを防ぐ）。
+
+    問答の間の余白のスタイルは、この断片の中だけに置く。FAQ は直す側に
+    しか出ないので、共通のスタイルと比べる側には効かない。
+    """
     pairs = _faq_pairs(game, today)
     if not pairs:
         return ""
@@ -263,6 +267,7 @@ def _faq_section(game: dict, today: datetime.date) -> str:
         for q, a in pairs)
     return f"""
         <section class="faq">
+            <style>.faq .faq-item{{margin:0 0 20px}}.faq .faq-item h3{{margin:0 0 6px}}.faq .faq-item p{{margin:0}}</style>
             <div class="section-title"><h2>よくある質問</h2></div>
             {items}
             <script type="application/ld+json">{_faq_json_ld(pairs)}</script>

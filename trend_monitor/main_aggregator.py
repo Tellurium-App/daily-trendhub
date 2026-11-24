@@ -135,9 +135,11 @@ def _breadcrumb_json_ld(gid: str, title: str) -> str:
 def _game_webpage_json_ld(gid: str, game: dict) -> str:
     """直す側のゲーム別ページだけに head へ出す WebPage の JSON-LD。
 
-    ページ自体（URL・名前・記録の最終日）と、主役のゲーム（名前と Steam
-    ストアへのリンク）を機械可読にする。dateModified は生成日ではなく、
-    記録にある最新のセールの最終日（ページの中身が最後に増えた日）。
+    ページ自体（URL・名前）と、主役のゲーム（名前と Steam ストアへの
+    リンク）を機械可読にする。
+    dateModified は入れない。画面に出ている「更新」は生成日だが、
+    記録の最終日は最大で71日前のページがあり、どちらを入れても
+    画面と食い違うため（PR #4 の検査指摘）。
     """
     title = game["title"]
     data = {
@@ -146,7 +148,6 @@ def _game_webpage_json_ld(gid: str, game: dict) -> str:
         "url": f"{SITE_BASE_URL}/{game_rel_path(gid)}",
         "name": f"{title}のSteamセール履歴",
         "inLanguage": "ja",
-        "dateModified": game["sales"][-1]["end"].isoformat(),
         # isPartOf（WebSite） は入れない。サイト名の構造化データはトップ
         # ページだけに出す決まり（PR #3）で、ゲーム別ページには出さない。
         "mainEntity": {"@type": "VideoGame", "name": title,

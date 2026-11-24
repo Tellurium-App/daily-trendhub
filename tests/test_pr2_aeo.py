@@ -172,8 +172,9 @@ class Pr2AeoTest(unittest.TestCase):
         data = webpages[0]
         self.assertEqual(data["url"], "https://daily-trendhub.com/game/steam/app/100/")
         self.assertEqual(data["name"], "Fixture GameのSteamセール履歴")
-        # dateModified は生成日ではなく、記録の最新のセールの最終日
-        self.assertEqual(data["dateModified"], "2026-10-02")
+        # dateModified は入れない（画面の「更新」は生成日で、記録の最終日と
+        # 食い違うため。PR #4 の検査指摘）
+        self.assertNotIn("dateModified", data)
         self.assertEqual(data["mainEntity"]["@type"], "VideoGame")
         self.assertEqual(data["mainEntity"]["name"], "Fixture Game")
         self.assertEqual(data["mainEntity"]["url"],

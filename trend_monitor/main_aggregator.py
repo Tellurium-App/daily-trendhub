@@ -86,6 +86,34 @@ def is_treatment_game(gid) -> bool:
     return not is_control_game(gid)
 
 
+# Steam のセット商品（バンドル）なのに、記録の URL が /app/ になっている
+# ことが確認できたゲーム。記録（CSV）には商品の種類の列が無く、URL は
+# 収集時（steam_monitor.py）に /app/<ID>/ で組み立てられるため、記録から
+# 種類を判別することはできない。ここに挙げた2本は、2026-11-24 に Steam
+# のストアページで直接確かめたもの：
+#   /bundle/32470/ → Cyberpunk 2077: Ultimate Edition（記録の題名と一致）
+#   /app/32470/    → STAR WARS Empire at War - Gold Pack（別のゲーム）
+#   /bundle/78920/ → Big Walk and PEAK（記録の題名と一致）
+#   /app/78920/    → 該当するアプリが無い（ストアのトップへ飛ぶ）
+# 収集側で API の type を見て直すのが本筋だが、steam_monitor.py は比べる
+# 側の記録にも使われる共有ファイルなので、この PR では触らない。
+STEAM_BUNDLE_IDS = frozenset({"32470", "78920"})
+
+
+def game_store_url(gid, game: dict) -> str:
+    """ゲーム別ページに出す Steam ストアへのリンク。
+
+    比べる側は記録の URL のまま。直す側のうち、セット商品だと確かめられた
+    ものだけ /app/ を /bundle/ に直す。
+    """
+    url = (game or {}).get("url") or ""
+    gid = _normalize_game_id(gid)
+    if is_treatment_game(gid) and gid in STEAM_BUNDLE_IDS:
+        url = url.replace(f"store.steampowered.com/app/{gid}/",
+                          f"store.steampowered.com/bundle/{gid}/", 1)
+    return url
+
+
 def _breadcrumb_json_ld(gid: str, title: str) -> str:
     """BreadcrumbList の JSON-LD。階層は記録にあるものだけ：
     トップ → Steamセール一覧 → このゲームのページ。"""
@@ -543,7 +571,7 @@ def build_game_page(game: dict, docs_dir: str, today: datetime.date, gid: str,
             <div class="section-title"><h2>各回の開始日の記録</h2></div>
             <ul class="archive-list">{''.join(daily_links)}</ul>
             <div class="btn-container history-actions">
-                <a href="{html.escape(game['url'], quote=True)}" target="_blank" rel="noopener" class="btn btn-primary">Steamで詳細を見る</a>
+                <a href="{html.escape(game_store_url(gid, game), quote=True)}" target="_blank" rel="noopener" class="btn btn-primary">Steamで詳細を見る</a>
                 <a href="/game/steam/" class="btn btn-secondary">Steamセール一覧に戻る</a>
             </div>
         </section>"""

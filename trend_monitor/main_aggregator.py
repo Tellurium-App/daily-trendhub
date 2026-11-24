@@ -162,6 +162,85 @@ def _sale_trend_section(game: dict) -> str:
         </section>"""
 
 
+def _faq_pairs(game: dict, today: datetime.date) -> list:
+    """「よくある質問」の質問と答えの組。答えの数字はすべて記録のもの。
+
+    質問の形で聞かれたときに、そのまま答えとして抜き出せる形にする。
+    次回のセールの予想は記録に無いので、質問にも答えにも入れない。
+    答えは、それだけ抜き出しても記録の範囲が分かる文にする。
+    記録の項目が揃っていないゲーム（テスト用の最小限の辞書など）では、
+    答えを作らず空の並びを返す。
+    """
+    sales = game.get("sales") or []
+    if (not sales or "start" not in sales[0]
+            or not game.get("sale_disc") or not game.get("record_start")):
+        return []
+    title = game["title"]
+    latest = sales[-1]
+    pairs = []
+    if today.isoformat() in game["sale_disc"]:
+        disc = game["sale_disc"][today.isoformat()]
+        run = (today - latest["start"]).days + 1
+        answer = (f"はい。本日（{japanese_date(today)}）の記録では{disc}%OFFでセール中です。"
+                  f"このセールは{japanese_date(latest['start'])}に始まり、{run}日目です。")
+    else:
+        answer = (f"本日（{japanese_date(today)}）の記録では、セール中ではありません。"
+                  f"最後のセールは{japanese_date(latest['start'])}〜{japanese_date(latest['end'])}で、"
+                  f"{latest['discount']}%OFFでした。")
+    pairs.append((f"{title}は今、セール中ですか？", answer))
+    pairs.append((
+        f"{title}はこれまでに何回セールになりましたか？",
+        f"TrendHub の記録（{japanese_date(game['record_start'])}以降・Steam の売上上位と"
+        f"セール上位に載った日だけ）では、{title}はこれまでに{len(sales)}回セールになっています。"
+        f"最初のセールは{japanese_date(sales[0]['start'])}に、"
+        f"最新のセールは{japanese_date(latest['start'])}に始まりました。"))
+    max_discount = max(s["discount"] for s in sales)
+    low = lowest_sale(sales)
+    if low:
+        answer = (f"記録上の最安値は{yen_value(low['price']):,}円"
+                  f"（{japanese_date(low['start'])}〜{japanese_date(low['end'])}のセール）で、"
+                  f"最大割引率は{max_discount}%OFFです。")
+        if low.get("original"):
+            answer += f"最安値の回の通常価格は{low['original']:,}円でした。"
+    else:
+        answer = f"価格の記録があるセールはありません。最大割引率は{max_discount}%OFFです。"
+    pairs.append((f"{title}の最安値と最大割引率は？", answer))
+    gaps = [s["gap"] for s in sales if s["gap"] is not None]
+    if gaps:
+        pairs.append((
+            f"{title}のセールはどのくらいの間隔でありますか？",
+            f"前のセールからの間隔は平均{_average_text(gaps)}日です。"
+            f"これまでの間隔は{'日・'.join(str(g) for g in gaps)}日でした。"))
+    return pairs
+
+
+def _faq_json_ld(pairs: list) -> str:
+    """FAQPage の JSON-LD。表示している質問・答えと一致させる。"""
+    data = {"@context": "https://schema.org", "@type": "FAQPage",
+            "mainEntity": [{"@type": "Question", "name": q,
+                            "acceptedAnswer": {"@type": "Answer", "text": a}}
+                           for q, a in pairs]}
+    return (json.dumps(data, ensure_ascii=False)
+            .replace("<", "\\u003c").replace(">", "\\u003e").replace("&", "\\u0026"))
+
+
+def _faq_section(game: dict, today: datetime.date) -> str:
+    """直す側だけに出す「よくある質問」。質問と答えは _faq_pairs の組を
+    表示と JSON-LD の両方に使う（食い違いを防ぐ）。"""
+    pairs = _faq_pairs(game, today)
+    if not pairs:
+        return ""
+    items = "".join(
+        f'<div class="faq-item"><h3>{html.escape(q)}</h3><p>{html.escape(a)}</p></div>'
+        for q, a in pairs)
+    return f"""
+        <section class="faq">
+            <div class="section-title"><h2>よくある質問</h2></div>
+            {items}
+            <script type="application/ld+json">{_faq_json_ld(pairs)}</script>
+        </section>"""
+
+
 def _similarity_key(gid: str, game: dict, other_gid: str, other: dict) -> tuple:
     """記録から計算できる類似度の並べ替えキー。最大割引率の近さ、次に
     セール回数の近さ、最後にアプリIDの近さ。ジャンルなど記録に無い属性は
@@ -295,12 +374,14 @@ def game_page_extra_sections(gid, game: dict = None, game_pages: dict = None) ->
     return sections
 
 
-def game_page_bottom_sections(gid, game: dict = None, game_pages: dict = None) -> list:
+def game_page_bottom_sections(gid, game: dict = None, game_pages: dict = None,
+                              today: datetime.date = None) -> list:
     """直す側だけにセール履歴の表より下へ追加するセクションの並びを返す。
 
-    ページの主役はセール履歴の表なので、「セールの傾向」と「セールの傾向が
-    近いゲーム」は表より下に置く。比べる側は常に空のままにする。
+    ページの主役はセール履歴の表なので、「セールの傾向」「よくある質問」
+    「セールの傾向が近いゲーム」は表より下に置く。比べる側は常に空のままにする。
     タイトルが無ければ（game が無い場合など）何も返さない。
+    today は「よくある質問」の今の状態の答えに使う（生成日）。
     """
     if is_control_game(gid):
         return []
@@ -310,6 +391,9 @@ def game_page_bottom_sections(gid, game: dict = None, game_pages: dict = None) -
     sections = []
     if game.get("sales"):
         sections.append(_sale_trend_section(game))
+        faq = _faq_section(game, today or datetime.date.today())
+        if faq:
+            sections.append(faq)
     related = _related_treatment_games(gid, game, game_pages)
     if related:
         items = "".join(
@@ -580,7 +664,7 @@ def build_game_page(game: dict, docs_dir: str, today: datetime.date, gid: str,
     # ゲーム」はページの主役であるセール履歴の表より下に置く。
     # 比べる側は両方とも空の並びを返すので、出力は変わらない。
     extra_sections = game_page_extra_sections(gid, game, game_pages)
-    bottom_sections = game_page_bottom_sections(gid, game, game_pages)
+    bottom_sections = game_page_bottom_sections(gid, game, game_pages, today=today)
     if extra_sections:
         content = "".join(extra_sections) + content
     if bottom_sections:

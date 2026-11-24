@@ -307,8 +307,10 @@ class GamePagesTest(unittest.TestCase):
             self.assertIn('aria-label="パンくずリスト"', sections[0])
             self.assertIn('href="/game/steam/"', sections[0])
             bottom = agg.game_page_bottom_sections(gid, game)
-            self.assertEqual(len(bottom), 1)
+            # PR2で「よくある質問」が傾向の下に足された（PR1時点では傾向だけ）。
+            self.assertEqual(len(bottom), 2)
             self.assertIn("セールの傾向", bottom[0])
+            self.assertIn("よくある質問", bottom[1])
         # タイトルが無ければ何も足さない。
         self.assertEqual(agg.game_page_extra_sections("32470", None), [])
         self.assertEqual(agg.game_page_extra_sections("32470", {}), [])
@@ -399,7 +401,7 @@ class GamePagesTest(unittest.TestCase):
         # canonical URL（gidで決まる）と題名の日付以外、比べる側と直す側の
         # 違いは追加断片だけであること。先頭・表より下の断片をすべて除去して比べる。
         sections = (agg.game_page_extra_sections("32470", game)
-                    + agg.game_page_bottom_sections("32470", game))
+                    + agg.game_page_bottom_sections("32470", game, today=self.today))
         stripped = treatment
         for section in sections:
             stripped = stripped.replace(section, "", 1)
@@ -415,22 +417,22 @@ class GamePagesTest(unittest.TestCase):
     def test_pr1_related_links_only_within_treatment(self):
         pages = self.pages()
         game = pages["100"]
-        # game_pages を渡さなければ内部リンクは出ない（先頭パンくず＋表より下の傾向）。
+        # game_pages を渡さなければ内部リンクは出ない（先頭パンくず＋表より下の傾向・FAQ）。
         self.assertEqual(len(agg.game_page_extra_sections("100", game)), 1)
-        self.assertEqual(len(agg.game_page_bottom_sections("100", game)), 1)
-        # 直す側は先頭パンくず＋表より下の傾向・内部リンク。リンク先は直す側の「300」だけ。
+        self.assertEqual(len(agg.game_page_bottom_sections("100", game)), 2)
+        # 直す側は先頭パンくず＋表より下の傾向・FAQ・内部リンク。リンク先は直す側の「300」だけ。
         self.assertEqual(len(agg.game_page_extra_sections("100", game, pages)), 1)
         bottom = agg.game_page_bottom_sections("100", game, pages)
-        self.assertEqual(len(bottom), 2)
-        self.assertIn("/game/steam/app/300/", bottom[1])
-        self.assertNotIn("/game/steam/app/100/", bottom[1])  # 自分自身へは張らない
-        self.assertIn("セールの傾向が近いゲーム", bottom[1])
+        self.assertEqual(len(bottom), 3)
+        self.assertIn("/game/steam/app/300/", bottom[2])
+        self.assertNotIn("/game/steam/app/100/", bottom[2])  # 自分自身へは張らない
+        self.assertIn("セールの傾向が近いゲーム", bottom[2])
         # 比べる側は game_pages を渡しても空のまま。
         self.assertEqual(agg.game_page_extra_sections("2246340", game, pages), [])
         self.assertEqual(agg.game_page_bottom_sections("2246340", game, pages), [])
-        # 直す側「300」からは「100」へ張られる。
+        # 直す側「300」からは「100」へ張られる（傾向・FAQの次の断片が内部リンク）。
         self.assertIn("/game/steam/app/100/",
-                      agg.game_page_bottom_sections("300", pages["300"], pages)[1])
+                      agg.game_page_bottom_sections("300", pages["300"], pages)[2])
 
     def test_pr1_related_links_choose_closest_discount_and_count(self):
         def fake(title, discounts):

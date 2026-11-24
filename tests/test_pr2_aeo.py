@@ -92,5 +92,58 @@ class Pr2AeoTest(unittest.TestCase):
         self.assertIn("https://store.steampowered.com/app/2246340/", self.generated_html("2246340"))
 
 
+    # --- 改善1：よくある質問（FAQ）と FAQPage JSON-LD ---
+
+    def json_ld_blocks(self, page_html):
+        blocks = []
+        for raw in re.findall(r'<script type="application/ld\+json">(.*?)</script>',
+                              page_html, flags=re.DOTALL):
+            blocks.append(json.loads(raw))
+        return blocks
+
+    def test_faq_only_for_treatment_and_json_ld_matches_visible(self):
+        self.generate()
+        page = self.generated_html("100")
+        self.assertIn("よくある質問", page)
+        faq = [b for b in self.json_ld_blocks(page) if b.get("@type") == "FAQPage"]
+        self.assertEqual(len(faq), 1)
+        questions = [e["name"] for e in faq[0]["mainEntity"]]
+        self.assertEqual(len(questions), 4)
+        visible_text = re.sub(r"<[^>]+>", "", page)
+        for entry in faq[0]["mainEntity"]:
+            self.assertIn(entry["name"], visible_text)
+            self.assertIn(entry["acceptedAnswer"]["text"], visible_text)
+        control = self.generated_html("2246340")
+        self.assertNotIn("よくある質問", control)
+        self.assertNotIn("FAQPage", control)
+
+    def test_faq_answers_use_record_numbers(self):
+        self.generate()
+        page = self.generated_html("100")
+        faq = [b for b in self.json_ld_blocks(page) if b.get("@type") == "FAQPage"][0]
+        answers = {e["name"]: e["acceptedAnswer"]["text"] for e in faq["mainEntity"]}
+        # 生成日2026-10-02はセール中（40%OFF・1日目）
+        status = answers["Fixture Gameは今、セール中ですか？"]
+        self.assertIn("40%OFFでセール中です", status)
+        self.assertIn("1日目", status)
+        count = answers["Fixture Gameはこれまでに何回セールになりましたか？"]
+        self.assertIn("これまでに2回セールになっています", count)
+        self.assertIn("2026年8月1日以降", count)
+        price = answers["Fixture Gameの最安値と最大割引率は？"]
+        self.assertIn("最安値は1,000円", price)
+        self.assertIn("最大割引率は50%OFF", price)
+        self.assertIn("通常価格は2,000円", price)
+        gap = answers["Fixture Gameのセールはどのくらいの間隔でありますか？"]
+        self.assertIn("平均21日", gap)
+
+    def test_faq_has_no_next_sale_prediction(self):
+        self.generate()
+        page = self.generated_html("100")
+        faq = [b for b in self.json_ld_blocks(page) if b.get("@type") == "FAQPage"][0]
+        for entry in faq["mainEntity"]:
+            self.assertNotIn("次回", entry["name"])
+            self.assertNotIn("次回", entry["acceptedAnswer"]["text"])
+
+
 if __name__ == "__main__":
     unittest.main()

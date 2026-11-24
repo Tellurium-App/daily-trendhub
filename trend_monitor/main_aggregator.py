@@ -86,16 +86,216 @@ def is_treatment_game(gid) -> bool:
     return not is_control_game(gid)
 
 
-def game_page_extra_sections(gid, game: dict = None) -> list:
-    """直す側だけに追加するセクションのHTML断片の並びを返す。
+def _breadcrumb_json_ld(gid: str, title: str) -> str:
+    """BreadcrumbList の JSON-LD。階層は記録にあるものだけ：
+    トップ → Steamセール一覧 → このゲームのページ。"""
+    items = [
+        {"@type": "ListItem", "position": 1, "name": "トップ",
+         "item": f"{SITE_BASE_URL}/"},
+        {"@type": "ListItem", "position": 2, "name": "Steamセール",
+         "item": f"{SITE_BASE_URL}/game/steam/"},
+        {"@type": "ListItem", "position": 3, "name": title,
+         "item": f"{SITE_BASE_URL}/{game_rel_path(gid)}"},
+    ]
+    data = {"@context": "https://schema.org", "@type": "BreadcrumbList",
+            "itemListElement": items}
+    # </script> などで script 要素が壊れないよう、危険な文字を \u 逃げにする。
+    return (json.dumps(data, ensure_ascii=False)
+            .replace("<", "\\u003c").replace(">", "\\u003e").replace("&", "\\u0026"))
 
-    PR0では両群とも空（出力は変わらない）。PR1以降で、直す側だけの
-    要素（例：パンくずの構造化データ）をここに足す。比べる側は
-    常に空のままにする。
+
+def _average_text(values) -> str:
+    """平均を小数第1位まで出し、末尾の .0 を落とす（55.0 → 55）。"""
+    return f"{sum(values) / len(values):.1f}".rstrip("0").rstrip(".")
+
+
+def _sale_trend_section(game: dict) -> str:
+    """記録から計算できる「セールの傾向」の文章。数字はすべて記録のもの。
+
+    既存の要約（回数・最大割引率・最安値・各回の間隔）とは重ならない、
+    平均割引率・平均間隔・最初と最新のセール開始日を文章にする。
+    予想や今後の日程は含まない。
+    """
+    sales = game["sales"]
+    count = len(sales)
+    avg_discount = _average_text([s["discount"] for s in sales])
+    parts = [f"記録にある{count}回のセールの平均割引率は{avg_discount}%です。"]
+    gaps = [s.get("gap") for s in sales if s.get("gap") is not None]
+    if gaps:
+        parts.append(f"前のセールからの間隔は平均{_average_text(gaps)}日でした。")
+    first_start, latest_start = sales[0].get("start"), sales[-1].get("start")
+    if first_start is not None and latest_start is not None:
+        parts.append(f"最初のセールは{japanese_date(first_start)}に、"
+                     f"最新のセールは{japanese_date(latest_start)}に始まっています。")
+    return f"""
+        <section class="sale-trend">
+            <div class="section-title"><h2>セールの傾向</h2></div>
+            <p>{''.join(parts)}</p>
+        </section>"""
+
+
+def _similarity_key(gid: str, game: dict, other_gid: str, other: dict) -> tuple:
+    """記録から計算できる類似度の並べ替えキー。最大割引率の近さ、次に
+    セール回数の近さ、最後にアプリIDの近さ。ジャンルなど記録に無い属性は
+    使わない。"""
+    cur_max = max(s["discount"] for s in game["sales"])
+    cur_count = len(game["sales"])
+    other_max = max(s["discount"] for s in other["sales"])
+    other_count = len(other["sales"])
+    try:
+        id_gap = abs(int(other_gid) - int(gid))
+    except (TypeError, ValueError):
+        id_gap = 0
+    return (abs(other_max - cur_max), abs(other_count - cur_count),
+            id_gap, str(other_gid))
+
+
+def _treatment_related_map(game_pages: dict) -> dict:
+    """直す側全ページの内部リンク先マップ（gid → リンク先gidの並び）。
+
+    1段階目：各ページが類似度のトップ3を選ぶ。2段階目：どこからも選ばれ
+    なかったページ（受けリンク0本）を、類似度が最も近く出しリンクが
+    4本未満のページのリンク先に加える。アプリID順に処理して決定的にする。
+    結果として全ページの受けリンクは1本以上、1ページの出しリンクは最大
+    4本になる。リンク先は直す側だけで、自分自身は含まない。
+    """
+    treatment = {str(g): other for g, other in game_pages.items()
+                 if is_treatment_game(g) and other.get("sales")}
+    ranked = {}
+    for gid, game in treatment.items():
+        candidates = sorted((o for o in treatment if o != gid),
+                            key=lambda o: _similarity_key(gid, game, o, treatment[o]))
+        ranked[gid] = candidates[:3]
+    indegree = {gid: 0 for gid in treatment}
+    for targets in ranked.values():
+        for target in targets:
+            indegree[target] += 1
+    for orphan in sorted((g for g, n in indegree.items() if n == 0),
+                         key=lambda g: (int(g) if g.isdigit() else 0, g)):
+        hosts = sorted(
+            (h for h in treatment if h != orphan),
+            key=lambda h: (_similarity_key(h, treatment[h], orphan, treatment[orphan])[:3]
+                           + (len(ranked[h]), h)))
+        host = next((h for h in hosts if len(ranked[h]) < 4), hosts[0])
+        ranked[host].append(orphan)
+        indegree[orphan] += 1
+    return ranked
+
+
+def _related_treatment_games(gid: str, game: dict, game_pages: dict) -> list:
+    """直す側の中で、gid のページがリンクするゲームの並びを返す。
+
+    選び方は _treatment_related_map() に従う（類似度トップ3に、受けリンク
+    0本のページへの補完を加えたもの）。比べる側は候補に入れない。
+    自分自身も除く。
+    """
+    if not game_pages or not game.get("sales"):
+        return []
+    gid = _normalize_game_id(gid)
+    link_map = _treatment_related_map(game_pages)
+    if gid in link_map:
+        targets = link_map[gid]
+    else:
+        # game_pages に含まれないページ（テスト用の架空IDなど）は、
+        # 類似度トップ3をその場で計算する。補完の対象にはならない。
+        candidates = sorted(
+            (o for o, other in game_pages.items()
+             if is_treatment_game(o) and other.get("sales")
+             and _normalize_game_id(o) != gid),
+            key=lambda o: _similarity_key(gid, game, str(o), game_pages[o]))
+        targets = [str(o) for o in candidates[:3]]
+    return [(target, game_pages[target]) for target in targets
+            if target in game_pages]
+
+
+# 直す側だけのスマホ用セール履歴表の見た目（修正4）。
+# 共通のCSSテンプレートや .ranking-table / .game-history-table の決まりは
+# 変えない。直す側の節だけに付く .treatment-history に限って効く。
+# 640px以下では表を見出し行なしの積み重ね表示にし、6列すべての数字を
+# 横スクロールなしで読めるようにする。見出しの文言は ::before の content
+# で補い、セルの数字そのものは変えない。
+_TREATMENT_MOBILE_TABLE_CSS = """
+@media (max-width:640px){
+.treatment-history .table-wrap{overflow-x:visible}
+.treatment-history .game-history-table{min-width:0;width:100%;display:block}
+.treatment-history .game-history-table thead{display:none}
+.treatment-history .game-history-table tbody{display:block}
+.treatment-history .game-history-table tr{display:block;border:1px solid var(--card-border);border-radius:12px;margin-bottom:12px;padding:2px 0}
+.treatment-history .game-history-table th,.treatment-history .game-history-table td{display:flex;justify-content:space-between;align-items:baseline;gap:12px;padding:8px 14px;border-bottom:1px solid var(--card-border);text-align:right;white-space:normal}
+.treatment-history .game-history-table tr>:last-child{border-bottom:0}
+.treatment-history .game-history-table th::before,.treatment-history .game-history-table td::before{flex:none;color:var(--text-secondary);font-weight:600;font-size:.85rem;text-align:left}
+.treatment-history .game-history-table th[scope="row"]::before{content:"回"}
+.treatment-history .game-history-table td:nth-child(2)::before{content:"期間"}
+.treatment-history .game-history-table td:nth-child(3)::before{content:"掲載された日数"}
+.treatment-history .game-history-table td:nth-child(4)::before{content:"最大割引率"}
+.treatment-history .game-history-table td:nth-child(5)::before{content:"その回の価格"}
+.treatment-history .game-history-table td:nth-child(6)::before{content:"前のセールからの間隔"}
+}"""
+
+
+def game_page_extra_sections(gid, game: dict = None, game_pages: dict = None) -> list:
+    """直す側だけにページの先頭へ追加するセクションのHTML断片の並びを返す。
+
+    ページの先頭に置くのはパンくず（と BreadcrumbList の JSON-LD）だけ。
+    「セールの傾向」と「セールの傾向が近いゲーム」は表より下へ置くため、
+    game_page_bottom_sections() が別に返す。比べる側は常に空のままにする。
+    タイトルが無ければ（game が無い場合など）何も返さない。
     """
     if is_control_game(gid):
         return []
-    return []
+    title = (game or {}).get("title") or ""
+    if not title:
+        return []
+    esc_title = html.escape(title)
+    # パンくずのリンク色は、サイト内のほかのリンクと同じ決まり
+    # （.ranking-table a / .archive-list a：color: var(--text-primary)、
+    # ホバーで var(--accent-cyan)）に合わせる。色を指定しないと既定の青に
+    # なり、暗い背景（--bg-dark: #0f111a）でほとんど読めない。
+    # CSSテンプレートを変えると docs/style.css との一致が崩れるため、
+    # 直す側だけに出るこの断片の中に <style> を置く。比べる側には出ない。
+    breadcrumb = f"""
+        <style>.breadcrumb a{{color:var(--text-primary);text-decoration:none}}.breadcrumb a:hover{{color:var(--accent-cyan)}}{_TREATMENT_MOBILE_TABLE_CSS}</style>
+        <nav class="breadcrumb" aria-label="パンくずリスト" style="font-size: 0.9rem; margin-bottom: 16px;">
+            <ol style="list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 0.4em;">
+                <li><a href="/">トップ</a></li><li aria-hidden="true">/</li>
+                <li><a href="/game/steam/">Steamセール</a></li><li aria-hidden="true">/</li>
+                <li aria-current="page">{esc_title}</li>
+            </ol>
+        </nav>
+        <script type="application/ld+json">{_breadcrumb_json_ld(gid, title)}</script>"""
+    sections = [breadcrumb]
+    return sections
+
+
+def game_page_bottom_sections(gid, game: dict = None, game_pages: dict = None) -> list:
+    """直す側だけにセール履歴の表より下へ追加するセクションの並びを返す。
+
+    ページの主役はセール履歴の表なので、「セールの傾向」と「セールの傾向が
+    近いゲーム」は表より下に置く。比べる側は常に空のままにする。
+    タイトルが無ければ（game が無い場合など）何も返さない。
+    """
+    if is_control_game(gid):
+        return []
+    title = (game or {}).get("title") or ""
+    if not title:
+        return []
+    sections = []
+    if game.get("sales"):
+        sections.append(_sale_trend_section(game))
+    related = _related_treatment_games(gid, game, game_pages)
+    if related:
+        items = "".join(
+            f'<li><a href="/{game_rel_path(other_gid)}">{html.escape(other["title"])}'
+            f'（記録上{len(other["sales"])}回・最大{max(s["discount"] for s in other["sales"])}%OFF）</a></li>'
+            for other_gid, other in related
+        )
+        sections.append(f"""
+        <section class="related-games">
+            <div class="section-title"><h2>セールの傾向が近いゲーム</h2></div>
+            <p>記録上の最大割引率とセール回数が近い、ほかのゲームです。</p>
+            <ul class="archive-list">{items}</ul>
+        </section>""")
+    return sections
 
 # 月間ランキングの掲載件数
 MONTHLY_TOP_N = 10
@@ -299,7 +499,8 @@ def game_summary(game: dict) -> str:
     return "".join(parts)
 
 
-def build_game_page(game: dict, docs_dir: str, today: datetime.date, gid: str) -> str:
+def build_game_page(game: dict, docs_dir: str, today: datetime.date, gid: str,
+                    game_pages: dict = None) -> str:
     """記録上のセール履歴。価格は各回の最終掲載日の行を使う。"""
     sales = game["sales"]
     latest = sales[-1]
@@ -322,8 +523,13 @@ def build_game_page(game: dict, docs_dir: str, today: datetime.date, gid: str) -
             label = f'<a href="/{start_path}">{label}</a>'
         daily_links.append(f"<li>{label}</li>")
     record_start = japanese_date(game["record_start"])
+    # 直す側の節だけに目印のクラスを付ける。スマホ用の表の見た目（修正4）
+    # はこの目印に限って効く。比べる側は従来のクラス名のままで、出力は
+    # 1文字も変わらない。
+    history_class = ("game-history treatment-history" if is_treatment_game(gid)
+                     else "game-history")
     content = f"""
-        <section class="game-history">
+        <section class="{history_class}">
             <p class="sale-status">{status}</p>
             <div class="table-wrap" tabindex="0" role="region" aria-label="セール履歴の表">
                 <table class="ranking-table game-history-table">
@@ -341,20 +547,28 @@ def build_game_page(game: dict, docs_dir: str, today: datetime.date, gid: str) -
                 <a href="/game/steam/" class="btn btn-secondary">Steamセール一覧に戻る</a>
             </div>
         </section>"""
-    # PR0の群分け：直す側だけの追加セクションをここでつなぐ。
-    # game_page_extra_sections() は現状、両群とも空の並びを返すため
-    # 出力は変わらない（PR1以降で直す側だけに要素を足す）。
-    extra_sections = game_page_extra_sections(gid, game)
+    # PR1の群分け：直す側だけの追加セクションを出す。パンくずはページの
+    # 先頭（<main> の先頭）に置き、「セールの傾向」と「セールの傾向が近い
+    # ゲーム」はページの主役であるセール履歴の表より下に置く。
+    # 比べる側は両方とも空の並びを返すので、出力は変わらない。
+    extra_sections = game_page_extra_sections(gid, game, game_pages)
+    bottom_sections = game_page_bottom_sections(gid, game, game_pages)
     if extra_sections:
-        content += "".join(extra_sections)
+        content = "".join(extra_sections) + content
+    if bottom_sections:
+        content = content + "".join(bottom_sections)
     title = game["title"]
     max_discount = max(s["discount"] for s in sales)
     low = lowest_sale(sales)
     lowest = f"・最安値{yen_value(low['price']):,}円" if low else ""
     summary = game_summary(game)
+    # 直す側の題名は日付を入れない。毎日変わる題名は、Google に「中身が
+    # 毎日変わるページ」と見られ、lastmod や表示の安定を損なう。
+    # 比べる側は従来どおり「（M月D日更新）」を残す。
+    updated_suffix = "" if is_treatment_game(gid) else f"（{today.month}月{today.day}日更新）"
     return build_page(
         title=(f"{title}のSteamセール履歴：記録上{len(sales)}回・最大{max_discount}%OFF{lowest}"
-               f"（{today.month}月{today.day}日更新） - TrendHub"),
+               f"{updated_suffix} - TrendHub"),
         description=summary, subtitle=summary,
         canonical_url=f"{SITE_BASE_URL}/{game_rel_path(gid)}",
         heading=f"{title}のSteamセール履歴", date_label=f"{japanese_date(today)} 更新",
@@ -371,7 +585,7 @@ def write_game_pages(csv_path: str, docs_dir: str, today: datetime.date = None,
         path = os.path.join(docs_dir, *game_rel_path(gid).strip("/").split("/"), "index.html")
         os.makedirs(os.path.dirname(path), exist_ok=True)
         with open(path, "w", encoding="utf-8") as f:
-            f.write(build_game_page(game, docs_dir, today, gid))
+            f.write(build_game_page(game, docs_dir, today, gid, game_pages=pages))
     return pages
 
 
@@ -863,6 +1077,19 @@ def build_page(title: str, description: str, canonical_url: str, heading: str,
 </html>"""
 
 
+def _game_lastmod(gid: str, game: dict) -> datetime.date:
+    """ゲーム別ページの sitemap lastmod（中身が実際に変わった日）。
+
+    直す側：最後のセールの最終掲載日。最終CSV掲載日（last_listed）は、
+    セール無しで売上上位に載った日でも進むため、中身が変わっていない日を
+    lastmod にしてしまう。それを防ぐため、セール記録の最終日を使う。
+    比べる側：従来どおり最終CSV掲載日（出力を変えない）。
+    """
+    if is_treatment_game(gid) and game.get("sales"):
+        return game["sales"][-1]["end"]
+    return game["last_listed"]
+
+
 def write_sitemap(docs_dir: str, dates: list, months: list = (), game_pages: dict = None) -> None:
     """従来のURLとゲーム別ページを掲載。ゲームのlastmodは最終CSV掲載日。"""
     today = datetime.date.today()
@@ -876,7 +1103,7 @@ def write_sitemap(docs_dir: str, dates: list, months: list = (), game_pages: dic
                 for d in dates]
     # 月間ページの中身は月末で確定するので、lastmod は月末日にする
     entries += [(f"{SITE_BASE_URL}/{monthly_rel_path(y, m)}", month_last_day(y, m)) for y, m in months]
-    entries += [(f"{SITE_BASE_URL}/{game_rel_path(gid)}", game["last_listed"])
+    entries += [(f"{SITE_BASE_URL}/{game_rel_path(gid)}", _game_lastmod(gid, game))
                 for gid, game in (game_pages or {}).items()]
 
     body = "\n".join(

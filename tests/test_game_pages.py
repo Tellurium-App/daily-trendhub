@@ -3,6 +3,8 @@ import contextlib
 import csv
 import datetime as dt
 import io
+import json
+import re
 from pathlib import Path
 import shutil
 import socket
@@ -116,7 +118,7 @@ class GamePagesTest(unittest.TestCase):
                   '最大割引率は60%OFF、記録上の最安値は850円（通常価格 2,000円）です。前のセールからの間隔は20日でした。')
         self.assertIn(f'<meta name="description" content="{answer}">', page)
         self.assertIn(f'<h1>A &amp; &lt;B&gt; &quot;C&quot;のSteamセール履歴</h1>\n            <p class="subtitle">{answer}</p>', page)
-        self.assertIn('<title>A &amp; &lt;B&gt; &quot;C&quot;のSteamセール履歴：記録上2回・最大60%OFF・最安値850円（10月2日更新）', page)
+        self.assertIn('<title>A &amp; &lt;B&gt; &quot;C&quot;のSteamセール履歴：記録上2回・最大60%OFF・最安値850円 - TrendHub', page)
         self.assertIn('href="https://daily-trendhub.com/game/steam/app/100/"', page)
         self.assertIn('property="og:url" content="https://daily-trendhub.com/game/steam/app/100/"', page)
         self.assertIn('href="../../../../style.css"', page)
@@ -168,7 +170,27 @@ class GamePagesTest(unittest.TestCase):
         after = entries()
         self.assertEqual({url: after[url] for url in before}, before)
         self.assertEqual(len(after), 10)
-        self.assertEqual(after[agg.SITE_BASE_URL + "/game/steam/app/100/"], "2026-10-03")
+        # 直す側「100」は、セール無しの掲載日（2026-10-03）ではなく
+        # 最後のセールの最終日（2026-10-02）が lastmod になる。
+        self.assertEqual(after[agg.SITE_BASE_URL + "/game/steam/app/100/"], "2026-10-02")
+
+    def test_pr1_sitemap_lastmod_control_keeps_last_listed(self):
+        pages = self.pages()
+        game = pages["100"]
+        # 直す側：最後のセールの最終日。比べる側：従来どおり最終CSV掲載日。
+        self.assertEqual(agg._game_lastmod("100", game), dt.date(2026, 10, 2))
+        self.assertEqual(agg._game_lastmod("2246340", game), dt.date(2026, 10, 3))
+        control_game = {"title": "Ctrl", "last_listed": dt.date(2026, 10, 3),
+                        "sales": [{"start": dt.date(2026, 9, 1), "end": dt.date(2026, 10, 2),
+                                   "discount": 10}]}
+        mixed = dict(pages)
+        mixed["2246340"] = control_game
+        agg.write_sitemap(str(self.docs), [dt.date(2026, 10, 1)], [(2026, 9)], mixed)
+        ns = {"s": "http://www.sitemaps.org/schemas/sitemap/0.9"}
+        root = ET.parse(self.docs / "sitemap.xml").getroot()
+        entries = {u.find("s:loc", ns).text: u.find("s:lastmod", ns).text for u in root}
+        self.assertEqual(entries[agg.SITE_BASE_URL + "/game/steam/app/100/"], "2026-10-02")
+        self.assertEqual(entries[agg.SITE_BASE_URL + "/game/steam/app/2246340/"], "2026-10-03")
 
     def test_offline_rebuild_side_effects_and_repeatability(self):
         steam = self.docs / "game/steam/index.html"
@@ -271,19 +293,251 @@ class GamePagesTest(unittest.TestCase):
         # 新しくできたページ（比べる側に無いID）は直す側になる。
         self.assertTrue(agg.is_treatment_game("9999999"))
 
-    def test_pr0_extra_sections_are_empty_for_both_groups(self):
+    def test_pr1_extra_sections_breadcrumb_only_for_treatment(self):
         game = self.pages()["100"]
-        for gid in ("2246340", "32470", "100"):
+        # 比べる側14本はすべて空のまま（先頭・表より下の両方）。
+        for gid in agg.CONTROL_GAME_IDS:
             self.assertEqual(agg.game_page_extra_sections(gid, game), [])
-        # 分岐を通っても出力は変わらない：同じゲームを比べる側ID・直す側IDで
-        # 生成し、canonical URL（gidで決まる）以外が同一であること。
+            self.assertEqual(agg.game_page_bottom_sections(gid, game), [])
+        # 直す側は先頭がパンくずの1断片だけ。セールの傾向は表より下へ。
+        for gid in ("32470", "100"):
+            sections = agg.game_page_extra_sections(gid, game)
+            self.assertEqual(len(sections), 1)
+            self.assertIn("BreadcrumbList", sections[0])
+            self.assertIn('aria-label="パンくずリスト"', sections[0])
+            self.assertIn('href="/game/steam/"', sections[0])
+            bottom = agg.game_page_bottom_sections(gid, game)
+            self.assertEqual(len(bottom), 1)
+            self.assertIn("セールの傾向", bottom[0])
+        # タイトルが無ければ何も足さない。
+        self.assertEqual(agg.game_page_extra_sections("32470", None), [])
+        self.assertEqual(agg.game_page_extra_sections("32470", {}), [])
+        self.assertEqual(agg.game_page_bottom_sections("32470", None), [])
+        self.assertEqual(agg.game_page_bottom_sections("32470", {}), [])
+
+    def test_fix2_trend_and_related_below_table(self):
+        pages = self.pages()
+        game = pages["100"]
+        treatment = agg.build_game_page(game, str(self.docs), self.today, "32470",
+                                        game_pages=pages)
+        # パンくずは表より上、「セールの傾向」と「セールの傾向が近いゲーム」
+        # は表より下。ページの主役はセール履歴の表。
+        self.assertLess(treatment.index("パンくずリスト"),
+                        treatment.index('class="game-history'))
+        self.assertLess(treatment.index("</table>"),
+                        treatment.index("セールの傾向"))
+        self.assertLess(treatment.index("</table>"),
+                        treatment.index("セールの傾向が近いゲーム"))
+        # 比べる側にはどちらも出ない。
+        control = agg.build_game_page(game, str(self.docs), self.today, "2246340")
+        self.assertNotIn("セールの傾向", control)
+        self.assertNotIn("セールの傾向が近いゲーム", control)
+
+    def test_pr1_sale_trend_section_uses_only_recorded_numbers(self):
+        game = self.pages()["100"]  # 2回、割引率50%・60%、間隔20日
+        bottom = agg.game_page_bottom_sections("32470", game)
+        trend = bottom[0]
+        self.assertIn("記録にある2回のセールの平均割引率は55%です。", trend)
+        self.assertIn("前のセールからの間隔は平均20日でした。", trend)
+        self.assertIn("最初のセールは2026年9月1日に、最新のセールは2026年10月1日に始まっています。", trend)
+        # 比べる側には出ない。
+        self.assertEqual(agg.game_page_extra_sections("2246340", game), [])
+
+    def test_pr1_breadcrumb_json_ld_matches_visible_breadcrumb(self):
+        game = self.pages()["100"]
+        page = agg.build_game_page(game, str(self.docs), self.today, "32470")
+        match = re.search(r'<script type="application/ld\+json">(.*?)</script>', page, re.DOTALL)
+        self.assertIsNotNone(match)
+        data = json.loads(match.group(1))
+        self.assertEqual(data["@type"], "BreadcrumbList")
+        items = data["itemListElement"]
+        self.assertEqual([(i["position"], i["name"]) for i in items],
+                         [(1, "トップ"), (2, "Steamセール"), (3, self.title)])
+        self.assertEqual(items[2]["item"], agg.SITE_BASE_URL + "/game/steam/app/32470/")
+        # 目に見えるパンくずも同じ階層で、現在地がタイトルになっている。
+        self.assertIn('<a href="/">トップ</a>', page)
+        self.assertIn('<a href="/game/steam/">Steamセール</a>', page)
+        self.assertIn('<li aria-current="page">A &amp; &lt;B&gt; &quot;C&quot;</li>', page)
+        # パンくずは <main> の先頭（セール履歴の節より前）に出る。
+        self.assertLess(page.index("パンくずリスト"), page.index('class="game-history'))
+
+    def test_fix1_breadcrumb_links_use_site_link_color(self):
+        game = self.pages()["100"]
+        sections = agg.game_page_extra_sections("32470", game)
+        breadcrumb = sections[0]
+        # サイト内のほかのリンクと同じ決まり：基本色は --text-primary、
+        # ホバーで --accent-cyan（.ranking-table a / .archive-list a と同じ）。
+        self.assertIn(".breadcrumb a{color:var(--text-primary)", breadcrumb)
+        self.assertIn(".breadcrumb a:hover{color:var(--accent-cyan)}", breadcrumb)
+        # 生成したページにも同じ決まりが入る。比べる側には出ない。
+        treatment = agg.build_game_page(game, str(self.docs), self.today, "32470")
+        self.assertIn(".breadcrumb a{color:var(--text-primary)", treatment)
+        control = agg.build_game_page(game, str(self.docs), self.today, "2246340")
+        self.assertNotIn(".breadcrumb a", control)
+        self.assertNotIn("パンくずリスト", control)
+
+    def test_pr1_title_date_removed_only_for_treatment(self):
+        game = self.pages()["100"]
         control = agg.build_game_page(game, str(self.docs), self.today, "2246340")
         treatment = agg.build_game_page(game, str(self.docs), self.today, "32470")
+        # 比べる側の題名は従来どおり日付つき。直す側は日付なし。
+        self.assertIn("（10月2日更新） - TrendHub</title>", control)
+        self.assertIn("最安値850円 - TrendHub</title>", treatment)
+        self.assertNotIn("（10月2日更新）", treatment)
+        # H1と更新バッジは両群とも変わらない（題名だけの変更）。
+        self.assertIn('<h1>A &amp; &lt;B&gt; &quot;C&quot;のSteamセール履歴</h1>', treatment)
+        self.assertIn("2026年10月2日 更新", treatment)
+
+    def test_pr1_control_page_has_no_breadcrumb(self):
+        game = self.pages()["100"]
+        control = agg.build_game_page(game, str(self.docs), self.today, "2246340")
+        treatment = agg.build_game_page(game, str(self.docs), self.today, "32470")
+        self.assertNotIn("BreadcrumbList", control)
+        self.assertNotIn("パンくずリスト", control)
+        self.assertIn("BreadcrumbList", treatment)
+
+        # canonical URL（gidで決まる）と題名の日付以外、比べる側と直す側の
+        # 違いは追加断片だけであること。先頭・表より下の断片をすべて除去して比べる。
+        sections = (agg.game_page_extra_sections("32470", game)
+                    + agg.game_page_bottom_sections("32470", game))
+        stripped = treatment
+        for section in sections:
+            stripped = stripped.replace(section, "", 1)
+        # 目印のクラス（修正4）は直す側だけの変更なので、比べるときは外す。
+        stripped = stripped.replace('class="game-history treatment-history"',
+                                    'class="game-history"', 1)
         self.assertEqual(
-            control.replace("/game/steam/app/2246340/", "/game/steam/app/GID/"),
-            treatment.replace("/game/steam/app/32470/", "/game/steam/app/GID/"),
+            control.replace("/game/steam/app/2246340/", "/game/steam/app/GID/").replace(
+                "（10月2日更新）", ""),
+            stripped.replace("/game/steam/app/32470/", "/game/steam/app/GID/"),
         )
-        self.assertNotIn("BreadcrumbList", control + treatment)
+
+    def test_pr1_related_links_only_within_treatment(self):
+        pages = self.pages()
+        game = pages["100"]
+        # game_pages を渡さなければ内部リンクは出ない（先頭パンくず＋表より下の傾向）。
+        self.assertEqual(len(agg.game_page_extra_sections("100", game)), 1)
+        self.assertEqual(len(agg.game_page_bottom_sections("100", game)), 1)
+        # 直す側は先頭パンくず＋表より下の傾向・内部リンク。リンク先は直す側の「300」だけ。
+        self.assertEqual(len(agg.game_page_extra_sections("100", game, pages)), 1)
+        bottom = agg.game_page_bottom_sections("100", game, pages)
+        self.assertEqual(len(bottom), 2)
+        self.assertIn("/game/steam/app/300/", bottom[1])
+        self.assertNotIn("/game/steam/app/100/", bottom[1])  # 自分自身へは張らない
+        self.assertIn("セールの傾向が近いゲーム", bottom[1])
+        # 比べる側は game_pages を渡しても空のまま。
+        self.assertEqual(agg.game_page_extra_sections("2246340", game, pages), [])
+        self.assertEqual(agg.game_page_bottom_sections("2246340", game, pages), [])
+        # 直す側「300」からは「100」へ張られる。
+        self.assertIn("/game/steam/app/100/",
+                      agg.game_page_bottom_sections("300", pages["300"], pages)[1])
+
+    def test_pr1_related_links_choose_closest_discount_and_count(self):
+        def fake(title, discounts):
+            return {"title": title,
+                    "sales": [{"discount": d} for d in discounts]}
+        cur = fake("Cur", [50, 50])
+        pages = {
+            "100": cur,
+            "300": fake("NearCount", [50, 50, 50]),   # 割引率差0・回数差1
+            "400": fake("NearDisc", [52, 52]),        # 割引率差2・回数差0
+            "500": fake("Far", [40, 40]),             # 割引率差10
+            "2246340": fake("Control", [51, 51]),     # 比べる側：候補に入れない
+        }
+        sections = agg.game_page_bottom_sections("100", cur, pages)
+        links = re.findall(r'href="(/game/steam/app/[0-9]+/)"', sections[1])
+        self.assertEqual(links, ["/game/steam/app/300/", "/game/steam/app/400/",
+                                 "/game/steam/app/500/"])
+        self.assertNotIn("/game/steam/app/2246340/", sections[0])
+
+    def test_fix3_every_treatment_page_receives_at_least_one_link(self):
+        def fake(title, discounts):
+            return {"title": title,
+                    "sales": [{"discount": d} for d in discounts]}
+        # 割引率が近い5本の集まりと、どれからも遠い1本（900）。
+        # 類似度トップ3だけでは900はどこからも選ばれない。
+        pages = {
+            "100": fake("A", [50, 50]),
+            "200": fake("B", [51, 51]),
+            "300": fake("C", [52, 52]),
+            "400": fake("D", [50]),
+            "500": fake("E", [53, 53, 53]),
+            "900": fake("Far", [90]),
+            "2246340": fake("Control", [51, 51]),  # 比べる側：候補に入れない
+        }
+        link_map = agg._treatment_related_map(pages)
+        indegree = {gid: 0 for gid in link_map}
+        for targets in link_map.values():
+            for target in targets:
+                indegree[target] += 1
+        # 直す側6本すべてが少なくとも1本のリンクを受けている。
+        for gid in ("100", "200", "300", "400", "500", "900"):
+            self.assertGreaterEqual(indegree[gid], 1, gid)
+        # 1ページの出しリンクは最大4本。比べる側へのリンクは無い。
+        for gid, targets in link_map.items():
+            self.assertLessEqual(len(targets), 4, gid)
+            self.assertNotIn(gid, targets)  # 自分自身へは張らない
+            self.assertNotIn("2246340", targets)
+        self.assertNotIn("2246340", link_map)
+        # 900は補完でどこかのリンク先に入っている。
+        self.assertIn("900", [t for targets in link_map.values() for t in targets])
+        # 生成したページにも、900へのリンクがどこかにある。
+        found = any(
+            "/game/steam/app/900/" in sec
+            for gid in ("100", "200", "300", "400", "500", "900")
+            for sec in agg.game_page_bottom_sections(gid, pages[gid], pages))
+        self.assertTrue(found)
+
+    def test_fix4_mobile_table_stacked_only_for_treatment(self):
+        game = self.pages()["100"]  # 2回：9月1日開始（50%・850円）、10月1日開始（60%・1500円、間隔20日）
+        treatment = agg.build_game_page(game, str(self.docs), self.today, "32470")
+        control = agg.build_game_page(game, str(self.docs), self.today, "2246340")
+        # 直す側の節だけに目印のクラスが付く。比べる側は従来のまま。
+        self.assertIn('<section class="game-history treatment-history">', treatment)
+        self.assertIn('<section class="game-history">', control)
+        self.assertNotIn("treatment-history", control)
+        # スマホ用の指定は直す側だけに出て、.treatment-history に限って効く。
+        for fragment in ("@media (max-width:640px)",
+                         ".treatment-history .game-history-table{min-width:0",
+                         ".treatment-history .game-history-table thead{display:none}",
+                         ".treatment-history .table-wrap{overflow-x:visible}"):
+            self.assertIn(fragment, treatment)
+            self.assertNotIn(fragment, control)
+        # 6列すべての見出し文言が ::before で付く。
+        for label in ("回", "期間", "掲載された日数", "最大割引率",
+                      "その回の価格", "前のセールからの間隔"):
+            self.assertIn(f'content:"{label}"', treatment)
+        # 表の6列の数字は記録と一致する（変更前と同じ値）。
+        tbody = re.search(r"<tbody>(.*?)</tbody>", treatment, re.DOTALL).group(1)
+        rows = re.findall(r"<tr>(.*?)</tr>", tbody, re.DOTALL)
+        self.assertEqual(len(rows), 2)
+        expected = []
+        for number, sale in reversed(list(enumerate(game["sales"], 1))):
+            gap = f'{sale["gap"]}日' if sale["gap"] is not None else "—"
+            expected.append((str(number),
+                             f'{agg.japanese_date(sale["start"])}〜{agg.japanese_date(sale["end"])}',
+                             f'{sale["listed_days"]}日', f'{sale["discount"]}%OFF',
+                             sale["price"], gap))
+        for row_html, want in zip(rows, expected):
+            cells = [re.sub(r"\s+", "", c)
+                     for c in re.findall(r"<t[hd][^>]*>(.*?)</t[hd]>", row_html, re.DOTALL)]
+            self.assertEqual(cells, list(want))
+        # 比べる側の表は同じ数字だが、目印もスマホ用の指定も無い。
+        control_tbody = re.search(r"<tbody>(.*?)</tbody>", control, re.DOTALL).group(1)
+        self.assertEqual(re.findall(r"<tr>(.*?)</tr>", control_tbody, re.DOTALL),
+                         re.findall(r"<tr>(.*?)</tr>", tbody, re.DOTALL))
+
+    def test_pr1_treatment_counts_prices_match_records(self):
+        self.generate()
+        page = self.generated_html()  # gid "100" は比べる側に無いので直す側
+        game = self.pages()["100"]
+        self.assertIn("BreadcrumbList", page)
+        # 記録から数え直した回数・最大割引率・最安値がページの要約と一致する。
+        self.assertEqual(len(game["sales"]), 2)
+        self.assertEqual(max(s["discount"] for s in game["sales"]), 60)
+        low = agg.lowest_sale(game["sales"])
+        self.assertEqual(agg.yen_value(low["price"]), 850)
+        self.assertIn("記録上2回・最大60%OFF・最安値850円", page)
 
     def test_python_311_syntax_and_stylesheet_template_match(self):
         source = Path(agg.__file__).read_text(encoding="utf-8")

@@ -193,7 +193,14 @@ def _faq_pairs(game: dict, today: datetime.date) -> list:
 
     質問の形で聞かれたときに、そのまま答えとして抜き出せる形にする。
     次回のセールの予想は記録に無いので、質問にも答えにも入れない。
-    答えは、それだけ抜き出しても記録の範囲が分かる文にする。
+    答えは、それだけ抜き出しても記録の範囲が分かる文にする（どの答えにも
+    記録の範囲＝起点の日付と「載った日だけ」を入れる）。
+
+    「今、セール中ですか？」は聞かない。記録は売上上位・セール上位に
+    載った日だけなので、記録に無いことはセール中でない根拠にならない
+    （PR #4 の検査で、「セール中ではありません」と答えた30本のうち
+    値段を照合できた28本中10本が実際にはセール中だった）。同じ理由で
+    「最後のセールは〜」という言い方もしない。
     記録の項目が揃っていないゲーム（テスト用の最小限の辞書など）では、
     答えを作らず空の並びを返す。
     """
@@ -202,40 +209,34 @@ def _faq_pairs(game: dict, today: datetime.date) -> list:
             or not game.get("sale_disc") or not game.get("record_start")):
         return []
     title = game["title"]
-    latest = sales[-1]
+    scope = (f"TrendHub の記録（{japanese_date(game['record_start'])}以降・"
+             f"Steam の売上上位とセール上位に載った日だけ）")
     pairs = []
-    if today.isoformat() in game["sale_disc"]:
-        disc = game["sale_disc"][today.isoformat()]
-        run = (today - latest["start"]).days + 1
-        answer = (f"はい。本日（{japanese_date(today)}）の記録では{disc}%OFFでセール中です。"
-                  f"このセールは{japanese_date(latest['start'])}に始まり、{run}日目です。")
-    else:
-        answer = (f"本日（{japanese_date(today)}）の記録では、セール中ではありません。"
-                  f"最後のセールは{japanese_date(latest['start'])}〜{japanese_date(latest['end'])}で、"
-                  f"{latest['discount']}%OFFでした。")
-    pairs.append((f"{title}は今、セール中ですか？", answer))
     pairs.append((
         f"{title}はこれまでに何回セールになりましたか？",
-        f"TrendHub の記録（{japanese_date(game['record_start'])}以降・Steam の売上上位と"
-        f"セール上位に載った日だけ）では、{title}はこれまでに{len(sales)}回セールになっています。"
-        f"最初のセールは{japanese_date(sales[0]['start'])}に、"
-        f"最新のセールは{japanese_date(latest['start'])}に始まりました。"))
+        f"{scope}では、{title}はこれまでに{len(sales)}回セールになっています。"))
     max_discount = max(s["discount"] for s in sales)
     low = lowest_sale(sales)
     if low:
-        answer = (f"記録上の最安値は{yen_value(low['price']):,}円"
+        answer = (f"{scope}での最安値は{yen_value(low['price']):,}円"
                   f"（{japanese_date(low['start'])}〜{japanese_date(low['end'])}のセール）で、"
                   f"最大割引率は{max_discount}%OFFです。")
         if low.get("original"):
             answer += f"最安値の回の通常価格は{low['original']:,}円でした。"
     else:
-        answer = f"価格の記録があるセールはありません。最大割引率は{max_discount}%OFFです。"
+        answer = (f"{scope}では、価格の記録があるセールはありません。"
+                  f"最大割引率は{max_discount}%OFFです。")
     pairs.append((f"{title}の最安値と最大割引率は？", answer))
     gaps = [s["gap"] for s in sales if s["gap"] is not None]
-    if gaps:
+    if len(gaps) == 1:
+        # 間隔が1つだけのときは、同じ数字を2回書かない。
         pairs.append((
             f"{title}のセールはどのくらいの間隔でありますか？",
-            f"前のセールからの間隔は平均{_average_text(gaps)}日です。"
+            f"{scope}での前のセールからの間隔は、記録にある1回分で{gaps[0]}日です。"))
+    elif gaps:
+        pairs.append((
+            f"{title}のセールはどのくらいの間隔でありますか？",
+            f"{scope}での前のセールからの間隔は平均{_average_text(gaps)}日です。"
             f"これまでの間隔は{'日・'.join(str(g) for g in gaps)}日でした。"))
     return pairs
 

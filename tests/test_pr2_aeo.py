@@ -108,7 +108,7 @@ class Pr2AeoTest(unittest.TestCase):
         faq = [b for b in self.json_ld_blocks(page) if b.get("@type") == "FAQPage"]
         self.assertEqual(len(faq), 1)
         questions = [e["name"] for e in faq[0]["mainEntity"]]
-        self.assertEqual(len(questions), 4)
+        self.assertEqual(len(questions), 3)
         visible_text = re.sub(r"<[^>]+>", "", page)
         for entry in faq[0]["mainEntity"]:
             self.assertIn(entry["name"], visible_text)
@@ -117,24 +117,41 @@ class Pr2AeoTest(unittest.TestCase):
         self.assertNotIn("よくある質問", control)
         self.assertNotIn("FAQPage", control)
 
+    def test_faq_has_no_current_sale_question(self):
+        # 記録は「載った日だけ」なので、載っていないことはセール中でない
+        # 根拠にならない。「今、セール中ですか？」は質問ごと置かない。
+        self.generate()
+        page = self.generated_html("100")
+        faq = [b for b in self.json_ld_blocks(page) if b.get("@type") == "FAQPage"][0]
+        for entry in faq["mainEntity"]:
+            self.assertNotIn("セール中ですか", entry["name"])
+            self.assertNotIn("セール中ではありません", entry["acceptedAnswer"]["text"])
+            self.assertNotIn("最後のセールは", entry["acceptedAnswer"]["text"])
+            self.assertNotIn("最新のセールは", entry["acceptedAnswer"]["text"])
+
     def test_faq_answers_use_record_numbers(self):
         self.generate()
         page = self.generated_html("100")
         faq = [b for b in self.json_ld_blocks(page) if b.get("@type") == "FAQPage"][0]
         answers = {e["name"]: e["acceptedAnswer"]["text"] for e in faq["mainEntity"]}
-        # 生成日2026-10-02はセール中（40%OFF・1日目）
-        status = answers["Fixture Gameは今、セール中ですか？"]
-        self.assertIn("40%OFFでセール中です", status)
-        self.assertIn("1日目", status)
         count = answers["Fixture Gameはこれまでに何回セールになりましたか？"]
         self.assertIn("これまでに2回セールになっています", count)
         self.assertIn("2026年8月1日以降", count)
+        self.assertIn("載った日だけ", count)
         price = answers["Fixture Gameの最安値と最大割引率は？"]
         self.assertIn("最安値は1,000円", price)
         self.assertIn("最大割引率は50%OFF", price)
         self.assertIn("通常価格は2,000円", price)
+        # 最安値・最大割引率の答えにも、回数と同じ記録の範囲を入れる
+        self.assertIn("2026年8月1日以降", price)
+        self.assertIn("載った日だけ", price)
         gap = answers["Fixture Gameのセールはどのくらいの間隔でありますか？"]
-        self.assertIn("平均21日", gap)
+        # 間隔の答えにも同じ記録の範囲を入れる
+        self.assertIn("2026年8月1日以降", gap)
+        self.assertIn("載った日だけ", gap)
+        # 間隔が1つだけ（21日）のときは、同じ数字を2回書かない
+        self.assertIn("記録にある1回分で21日です", gap)
+        self.assertEqual(gap.count("21日"), 1)
 
     def test_faq_has_no_next_sale_prediction(self):
         self.generate()

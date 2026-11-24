@@ -145,5 +145,34 @@ class Pr2AeoTest(unittest.TestCase):
             self.assertNotIn("次回", entry["acceptedAnswer"]["text"])
 
 
+    # --- 改善2：WebPage JSON-LD（ページとゲームの機械可読な情報） ---
+
+    def test_webpage_json_ld_only_for_treatment(self):
+        self.generate()
+        page = self.generated_html("100")
+        webpages = [b for b in self.json_ld_blocks(page) if b.get("@type") == "WebPage"]
+        self.assertEqual(len(webpages), 1)
+        data = webpages[0]
+        self.assertEqual(data["url"], "https://daily-trendhub.com/game/steam/app/100/")
+        self.assertEqual(data["name"], "Fixture GameのSteamセール履歴")
+        # dateModified は生成日ではなく、記録の最新のセールの最終日
+        self.assertEqual(data["dateModified"], "2026-10-02")
+        self.assertEqual(data["mainEntity"]["@type"], "VideoGame")
+        self.assertEqual(data["mainEntity"]["name"], "Fixture Game")
+        self.assertEqual(data["mainEntity"]["url"],
+                         "https://store.steampowered.com/app/100/")
+        control = self.generated_html("2246340")
+        self.assertNotIn('"@type": "WebPage"', control)
+        self.assertNotIn("VideoGame", control)
+
+    def test_webpage_json_ld_uses_bundle_url_for_bundle_games(self):
+        self.generate()
+        page = self.generated_html("32470")
+        webpages = [b for b in self.json_ld_blocks(page) if b.get("@type") == "WebPage"]
+        self.assertEqual(len(webpages), 1)
+        self.assertEqual(webpages[0]["mainEntity"]["url"],
+                         "https://store.steampowered.com/bundle/32470/")
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -132,6 +132,32 @@ def _breadcrumb_json_ld(gid: str, title: str) -> str:
             .replace("<", "\\u003c").replace(">", "\\u003e").replace("&", "\\u0026"))
 
 
+def _game_webpage_json_ld(gid: str, game: dict) -> str:
+    """直す側のゲーム別ページだけに head へ出す WebPage の JSON-LD。
+
+    ページ自体（URL・名前・記録の最終日）と、主役のゲーム（名前と Steam
+    ストアへのリンク）を機械可読にする。dateModified は生成日ではなく、
+    記録にある最新のセールの最終日（ページの中身が最後に増えた日）。
+    """
+    title = game["title"]
+    data = {
+        "@context": "https://schema.org",
+        "@type": "WebPage",
+        "url": f"{SITE_BASE_URL}/{game_rel_path(gid)}",
+        "name": f"{title}のSteamセール履歴",
+        "inLanguage": "ja",
+        "dateModified": game["sales"][-1]["end"].isoformat(),
+        # isPartOf（WebSite） は入れない。サイト名の構造化データはトップ
+        # ページだけに出す決まり（PR #3）で、ゲーム別ページには出さない。
+        "mainEntity": {"@type": "VideoGame", "name": title,
+                       "url": game_store_url(gid, game)},
+    }
+    return ('<script type="application/ld+json">'
+            + (json.dumps(data, ensure_ascii=False)
+               .replace("<", "\\u003c").replace(">", "\\u003e").replace("&", "\\u0026"))
+            + "</script>")
+
+
 def _average_text(values) -> str:
     """平均を小数第1位まで出し、末尾の .0 を落とす（55.0 → 55）。"""
     return f"{sum(values) / len(values):.1f}".rstrip("0").rstrip(".")
@@ -685,6 +711,10 @@ def build_game_page(game: dict, docs_dir: str, today: datetime.date, gid: str,
         canonical_url=f"{SITE_BASE_URL}/{game_rel_path(gid)}",
         heading=f"{title}のSteamセール履歴", date_label=f"{japanese_date(today)} 更新",
         game_cards_html="", gadget_cards_html="", archive_html="", depth=4, about_html=content,
+        # 直す側だけ、ページとゲームの機械可読な情報（WebPage JSON-LD）を
+        # head に出す。比べる側は structured_data を渡さないので変わらない。
+        structured_data=(_game_webpage_json_ld(gid, game)
+                         if is_treatment_game(gid) else ""),
     )
 
 

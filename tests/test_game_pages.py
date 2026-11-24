@@ -348,9 +348,12 @@ class GamePagesTest(unittest.TestCase):
     def test_pr1_breadcrumb_json_ld_matches_visible_breadcrumb(self):
         game = self.pages()["100"]
         page = agg.build_game_page(game, str(self.docs), self.today, "32470")
-        match = re.search(r'<script type="application/ld\+json">(.*?)</script>', page, re.DOTALL)
-        self.assertIsNotNone(match)
-        data = json.loads(match.group(1))
+        # PR2で head に WebPage の JSON-LD が足されたため、最初のブロックでは
+        # なく BreadcrumbList のブロックを選ぶ。
+        blocks = re.findall(r'<script type="application/ld\+json">(.*?)</script>',
+                            page, re.DOTALL)
+        data = next(json.loads(b) for b in blocks
+                    if json.loads(b).get("@type") == "BreadcrumbList")
         self.assertEqual(data["@type"], "BreadcrumbList")
         items = data["itemListElement"]
         self.assertEqual([(i["position"], i["name"]) for i in items],
@@ -405,6 +408,9 @@ class GamePagesTest(unittest.TestCase):
         stripped = treatment
         for section in sections:
             stripped = stripped.replace(section, "", 1)
+        # PR2で head に足された WebPage の JSON-LD も、直す側だけの追加なので
+        # 比べるときは外す（build_page が前に付ける改行と空白も一緒に）。
+        stripped = stripped.replace("\n    " + agg._game_webpage_json_ld("32470", game), "", 1)
         # 目印のクラス（修正4）は直す側だけの変更なので、比べるときは外す。
         stripped = stripped.replace('class="game-history treatment-history"',
                                     'class="game-history"', 1)

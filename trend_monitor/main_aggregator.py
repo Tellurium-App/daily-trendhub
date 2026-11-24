@@ -651,12 +651,22 @@ def build_game_page(game: dict, docs_dir: str, today: datetime.date, gid: str,
     rows, daily_links = [], []
     for number, sale in reversed(list(enumerate(sales, 1))):
         gap = f'{sale["gap"]}日' if sale["gap"] is not None else "—"
-        period = f'{japanese_date(sale["start"])}〜{japanese_date(sale["end"])}'
+        # 直す側だけ、日付に機械可読な datetime を付ける。表示する文字は
+        # 変えない（<time> で囲むだけ）。
+        if is_treatment_game(gid):
+            period = (f'<time datetime="{sale["start"].isoformat()}">{japanese_date(sale["start"])}</time>'
+                      f'〜<time datetime="{sale["end"].isoformat()}">{japanese_date(sale["end"])}</time>')
+        else:
+            period = f'{japanese_date(sale["start"])}〜{japanese_date(sale["end"])}'
         rows.append(f"""<tr><th scope="row">{number}</th><td class="num">{period}</td>
                     <td class="num">{sale['listed_days']}日</td><td class="num">{sale['discount']}%OFF</td>
                     <td>{html.escape(sale['price'])}</td><td class="num">{gap}</td></tr>""")
         start_path = archive_rel_path(sale["start"])
-        label = f'{number}回目：{japanese_date(sale["start"])}'
+        if is_treatment_game(gid):
+            label = (f'{number}回目：<time datetime="{sale["start"].isoformat()}">'
+                     f'{japanese_date(sale["start"])}</time>')
+        else:
+            label = f'{number}回目：{japanese_date(sale["start"])}'
         if os.path.isfile(os.path.join(docs_dir, *start_path.strip("/").split("/"), "index.html")):
             label = f'<a href="/{start_path}">{label}</a>'
         daily_links.append(f"<li>{label}</li>")

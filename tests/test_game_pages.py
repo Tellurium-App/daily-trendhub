@@ -152,7 +152,8 @@ class GamePagesTest(unittest.TestCase):
         page = self.generated_html()
         self.assertIn('href="/2026/10/01/"', page)
         self.assertNotIn('href="/2026/09/01/"', page)
-        self.assertIn("1回目：2026年9月1日</li>", page)
+        # PR2で直す側の日付に <time datetime> が付いた（表示の文字は同じ）。
+        self.assertIn('1回目：<time datetime="2026-09-01">2026年9月1日</time></li>', page)
 
     def test_sitemap_preserves_categories_and_adds_all_games_with_last_listed(self):
         dates = [dt.date(2026, 10, 1)]
@@ -414,6 +415,8 @@ class GamePagesTest(unittest.TestCase):
         # 目印のクラス（修正4）は直す側だけの変更なので、比べるときは外す。
         stripped = stripped.replace('class="game-history treatment-history"',
                                     'class="game-history"', 1)
+        # PR2の日付の <time datetime> も直す側だけの変更なので、比べるときは外す。
+        stripped = re.sub(r"</?time[^>]*>", "", stripped)
         self.assertEqual(
             control.replace("/game/steam/app/2246340/", "/game/steam/app/GID/").replace(
                 "（10月2日更新）", ""),
@@ -527,13 +530,17 @@ class GamePagesTest(unittest.TestCase):
                              f'{sale["listed_days"]}日', f'{sale["discount"]}%OFF',
                              sale["price"], gap))
         for row_html, want in zip(rows, expected):
+            # PR2で直す側の日付に <time datetime> が付いた。数字の比較では外す。
+            row_html = re.sub(r"</?time[^>]*>", "", row_html)
             cells = [re.sub(r"\s+", "", c)
                      for c in re.findall(r"<t[hd][^>]*>(.*?)</t[hd]>", row_html, re.DOTALL)]
             self.assertEqual(cells, list(want))
         # 比べる側の表は同じ数字だが、目印もスマホ用の指定も無い。
+        # （直す側の <time> を外してから比べる。）
         control_tbody = re.search(r"<tbody>(.*?)</tbody>", control, re.DOTALL).group(1)
         self.assertEqual(re.findall(r"<tr>(.*?)</tr>", control_tbody, re.DOTALL),
-                         re.findall(r"<tr>(.*?)</tr>", tbody, re.DOTALL))
+                         re.findall(r"<tr>(.*?)</tr>",
+                                    re.sub(r"</?time[^>]*>", "", tbody), re.DOTALL))
 
     def test_pr1_treatment_counts_prices_match_records(self):
         self.generate()

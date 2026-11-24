@@ -174,5 +174,20 @@ class Pr2AeoTest(unittest.TestCase):
                          "https://store.steampowered.com/bundle/32470/")
 
 
+    # --- 改善3：日付への <time datetime>（機械可読な日付） ---
+
+    def test_time_datetime_only_for_treatment(self):
+        self.generate()
+        page = self.generated_html("100")
+        self.assertIn('<time datetime="2026-09-10">2026年9月10日</time>', page)
+        self.assertIn('<time datetime="2026-10-02">2026年10月2日</time>', page)
+        # 表示される文字は変えていない（タグを除けば従来の日付表記）
+        text = re.sub(r"<[^>]+>", "", page)
+        self.assertIn("2026年9月10日〜2026年9月10日", text)
+        self.assertIn("1回目：2026年9月10日", text)
+        control = self.generated_html("2246340")
+        self.assertNotIn("<time", control)
+
+
 if __name__ == "__main__":
     unittest.main()

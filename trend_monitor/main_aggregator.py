@@ -86,6 +86,34 @@ def is_treatment_game(gid) -> bool:
     return not is_control_game(gid)
 
 
+# Steam のセット商品（バンドル）なのに、記録の URL が /app/ になっている
+# ことが確認できたゲーム。記録（CSV）には商品の種類の列が無く、URL は
+# 収集時（steam_monitor.py）に /app/<ID>/ で組み立てられるため、記録から
+# 種類を判別することはできない。ここに挙げた2本は、2026-11-24 に Steam
+# のストアページで直接確かめたもの：
+#   /bundle/32470/ → Cyberpunk 2077: Ultimate Edition（記録の題名と一致）
+#   /app/32470/    → STAR WARS Empire at War - Gold Pack（別のゲーム）
+#   /bundle/78920/ → Big Walk and PEAK（記録の題名と一致）
+#   /app/78920/    → 該当するアプリが無い（ストアのトップへ飛ぶ）
+# 収集側で API の type を見て直すのが本筋だが、steam_monitor.py は比べる
+# 側の記録にも使われる共有ファイルなので、この PR では触らない。
+STEAM_BUNDLE_IDS = frozenset({"32470", "78920"})
+
+
+def game_store_url(gid, game: dict) -> str:
+    """ゲーム別ページに出す Steam ストアへのリンク。
+
+    比べる側は記録の URL のまま。直す側のうち、セット商品だと確かめられた
+    ものだけ /app/ を /bundle/ に直す。
+    """
+    url = (game or {}).get("url") or ""
+    gid = _normalize_game_id(gid)
+    if is_treatment_game(gid) and gid in STEAM_BUNDLE_IDS:
+        url = url.replace(f"store.steampowered.com/app/{gid}/",
+                          f"store.steampowered.com/bundle/{gid}/", 1)
+    return url
+
+
 def _breadcrumb_json_ld(gid: str, title: str) -> str:
     """BreadcrumbList の JSON-LD。階層は記録にあるものだけ：
     トップ → Steamセール一覧 → このゲームのページ。"""
@@ -102,6 +130,33 @@ def _breadcrumb_json_ld(gid: str, title: str) -> str:
     # </script> などで script 要素が壊れないよう、危険な文字を \u 逃げにする。
     return (json.dumps(data, ensure_ascii=False)
             .replace("<", "\\u003c").replace(">", "\\u003e").replace("&", "\\u0026"))
+
+
+def _game_webpage_json_ld(gid: str, game: dict) -> str:
+    """直す側のゲーム別ページだけに head へ出す WebPage の JSON-LD。
+
+    ページ自体（URL・名前）と、主役のゲーム（名前と Steam ストアへの
+    リンク）を機械可読にする。
+    dateModified は入れない。画面に出ている「更新」は生成日だが、
+    記録の最終日は最大で71日前のページがあり、どちらを入れても
+    画面と食い違うため（PR #4 の検査指摘）。
+    """
+    title = game["title"]
+    data = {
+        "@context": "https://schema.org",
+        "@type": "WebPage",
+        "url": f"{SITE_BASE_URL}/{game_rel_path(gid)}",
+        "name": f"{title}のSteamセール履歴",
+        "inLanguage": "ja",
+        # isPartOf（WebSite） は入れない。サイト名の構造化データはトップ
+        # ページだけに出す決まり（PR #3）で、ゲーム別ページには出さない。
+        "mainEntity": {"@type": "VideoGame", "name": title,
+                       "url": game_store_url(gid, game)},
+    }
+    return ('<script type="application/ld+json">'
+            + (json.dumps(data, ensure_ascii=False)
+               .replace("<", "\\u003c").replace(">", "\\u003e").replace("&", "\\u0026"))
+            + "</script>")
 
 
 def _average_text(values) -> str:
@@ -131,6 +186,91 @@ def _sale_trend_section(game: dict) -> str:
         <section class="sale-trend">
             <div class="section-title"><h2>セールの傾向</h2></div>
             <p>{''.join(parts)}</p>
+        </section>"""
+
+
+def _faq_pairs(game: dict, today: datetime.date) -> list:
+    """「よくある質問」の質問と答えの組。答えの数字はすべて記録のもの。
+
+    質問の形で聞かれたときに、そのまま答えとして抜き出せる形にする。
+    次回のセールの予想は記録に無いので、質問にも答えにも入れない。
+    答えは、それだけ抜き出しても記録の範囲が分かる文にする（どの答えにも
+    記録の範囲＝起点の日付と「載った日だけ」を入れる）。
+
+    「今、セール中ですか？」は聞かない。記録は売上上位・セール上位に
+    載った日だけなので、記録に無いことはセール中でない根拠にならない
+    （PR #4 の検査で、「セール中ではありません」と答えた30本のうち
+    値段を照合できた28本中10本が実際にはセール中だった）。同じ理由で
+    「最後のセールは〜」という言い方もしない。
+    記録の項目が揃っていないゲーム（テスト用の最小限の辞書など）では、
+    答えを作らず空の並びを返す。
+    """
+    sales = game.get("sales") or []
+    if (not sales or "start" not in sales[0]
+            or not game.get("sale_disc") or not game.get("record_start")):
+        return []
+    title = game["title"]
+    scope = (f"TrendHub の記録（{japanese_date(game['record_start'])}以降・"
+             f"Steam の売上上位とセール上位に載った日だけ）")
+    pairs = []
+    pairs.append((
+        f"{title}はこれまでに何回セールになりましたか？",
+        f"{scope}では、{title}はこれまでに{len(sales)}回セールになっています。"))
+    max_discount = max(s["discount"] for s in sales)
+    low = lowest_sale(sales)
+    if low:
+        answer = (f"{scope}での最安値は{yen_value(low['price']):,}円"
+                  f"（{japanese_date(low['start'])}〜{japanese_date(low['end'])}のセール）で、"
+                  f"最大割引率は{max_discount}%OFFです。")
+        if low.get("original"):
+            answer += f"最安値の回の通常価格は{low['original']:,}円でした。"
+    else:
+        answer = (f"{scope}では、価格の記録があるセールはありません。"
+                  f"最大割引率は{max_discount}%OFFです。")
+    pairs.append((f"{title}の最安値と最大割引率は？", answer))
+    gaps = [s["gap"] for s in sales if s["gap"] is not None]
+    if len(gaps) == 1:
+        # 間隔が1つだけのときは、同じ数字を2回書かない。
+        pairs.append((
+            f"{title}のセールはどのくらいの間隔でありますか？",
+            f"{scope}での前のセールからの間隔は、記録にある1回分で{gaps[0]}日です。"))
+    elif gaps:
+        pairs.append((
+            f"{title}のセールはどのくらいの間隔でありますか？",
+            f"{scope}での前のセールからの間隔は平均{_average_text(gaps)}日です。"
+            f"これまでの間隔は{'日・'.join(str(g) for g in gaps)}日でした。"))
+    return pairs
+
+
+def _faq_json_ld(pairs: list) -> str:
+    """FAQPage の JSON-LD。表示している質問・答えと一致させる。"""
+    data = {"@context": "https://schema.org", "@type": "FAQPage",
+            "mainEntity": [{"@type": "Question", "name": q,
+                            "acceptedAnswer": {"@type": "Answer", "text": a}}
+                           for q, a in pairs]}
+    return (json.dumps(data, ensure_ascii=False)
+            .replace("<", "\\u003c").replace(">", "\\u003e").replace("&", "\\u0026"))
+
+
+def _faq_section(game: dict, today: datetime.date) -> str:
+    """直す側だけに出す「よくある質問」。質問と答えは _faq_pairs の組を
+    表示と JSON-LD の両方に使う（食い違いを防ぐ）。
+
+    問答の間の余白のスタイルは、この断片の中だけに置く。FAQ は直す側に
+    しか出ないので、共通のスタイルと比べる側には効かない。
+    """
+    pairs = _faq_pairs(game, today)
+    if not pairs:
+        return ""
+    items = "".join(
+        f'<div class="faq-item"><h3>{html.escape(q)}</h3><p>{html.escape(a)}</p></div>'
+        for q, a in pairs)
+    return f"""
+        <section class="faq">
+            <style>.faq .faq-item{{margin:0 0 20px}}.faq .faq-item h3{{margin:0 0 6px}}.faq .faq-item p{{margin:0}}</style>
+            <div class="section-title"><h2>よくある質問</h2></div>
+            {items}
+            <script type="application/ld+json">{_faq_json_ld(pairs)}</script>
         </section>"""
 
 
@@ -267,12 +407,14 @@ def game_page_extra_sections(gid, game: dict = None, game_pages: dict = None) ->
     return sections
 
 
-def game_page_bottom_sections(gid, game: dict = None, game_pages: dict = None) -> list:
+def game_page_bottom_sections(gid, game: dict = None, game_pages: dict = None,
+                              today: datetime.date = None) -> list:
     """直す側だけにセール履歴の表より下へ追加するセクションの並びを返す。
 
-    ページの主役はセール履歴の表なので、「セールの傾向」と「セールの傾向が
-    近いゲーム」は表より下に置く。比べる側は常に空のままにする。
+    ページの主役はセール履歴の表なので、「セールの傾向」「よくある質問」
+    「セールの傾向が近いゲーム」は表より下に置く。比べる側は常に空のままにする。
     タイトルが無ければ（game が無い場合など）何も返さない。
+    today は「よくある質問」の今の状態の答えに使う（生成日）。
     """
     if is_control_game(gid):
         return []
@@ -282,6 +424,9 @@ def game_page_bottom_sections(gid, game: dict = None, game_pages: dict = None) -
     sections = []
     if game.get("sales"):
         sections.append(_sale_trend_section(game))
+        faq = _faq_section(game, today or datetime.date.today())
+        if faq:
+            sections.append(faq)
     related = _related_treatment_games(gid, game, game_pages)
     if related:
         items = "".join(
@@ -513,12 +658,22 @@ def build_game_page(game: dict, docs_dir: str, today: datetime.date, gid: str,
     rows, daily_links = [], []
     for number, sale in reversed(list(enumerate(sales, 1))):
         gap = f'{sale["gap"]}日' if sale["gap"] is not None else "—"
-        period = f'{japanese_date(sale["start"])}〜{japanese_date(sale["end"])}'
+        # 直す側だけ、日付に機械可読な datetime を付ける。表示する文字は
+        # 変えない（<time> で囲むだけ）。
+        if is_treatment_game(gid):
+            period = (f'<time datetime="{sale["start"].isoformat()}">{japanese_date(sale["start"])}</time>'
+                      f'〜<time datetime="{sale["end"].isoformat()}">{japanese_date(sale["end"])}</time>')
+        else:
+            period = f'{japanese_date(sale["start"])}〜{japanese_date(sale["end"])}'
         rows.append(f"""<tr><th scope="row">{number}</th><td class="num">{period}</td>
                     <td class="num">{sale['listed_days']}日</td><td class="num">{sale['discount']}%OFF</td>
                     <td>{html.escape(sale['price'])}</td><td class="num">{gap}</td></tr>""")
         start_path = archive_rel_path(sale["start"])
-        label = f'{number}回目：{japanese_date(sale["start"])}'
+        if is_treatment_game(gid):
+            label = (f'{number}回目：<time datetime="{sale["start"].isoformat()}">'
+                     f'{japanese_date(sale["start"])}</time>')
+        else:
+            label = f'{number}回目：{japanese_date(sale["start"])}'
         if os.path.isfile(os.path.join(docs_dir, *start_path.strip("/").split("/"), "index.html")):
             label = f'<a href="/{start_path}">{label}</a>'
         daily_links.append(f"<li>{label}</li>")
@@ -543,7 +698,7 @@ def build_game_page(game: dict, docs_dir: str, today: datetime.date, gid: str,
             <div class="section-title"><h2>各回の開始日の記録</h2></div>
             <ul class="archive-list">{''.join(daily_links)}</ul>
             <div class="btn-container history-actions">
-                <a href="{html.escape(game['url'], quote=True)}" target="_blank" rel="noopener" class="btn btn-primary">Steamで詳細を見る</a>
+                <a href="{html.escape(game_store_url(gid, game), quote=True)}" target="_blank" rel="noopener" class="btn btn-primary">Steamで詳細を見る</a>
                 <a href="/game/steam/" class="btn btn-secondary">Steamセール一覧に戻る</a>
             </div>
         </section>"""
@@ -552,7 +707,7 @@ def build_game_page(game: dict, docs_dir: str, today: datetime.date, gid: str,
     # ゲーム」はページの主役であるセール履歴の表より下に置く。
     # 比べる側は両方とも空の並びを返すので、出力は変わらない。
     extra_sections = game_page_extra_sections(gid, game, game_pages)
-    bottom_sections = game_page_bottom_sections(gid, game, game_pages)
+    bottom_sections = game_page_bottom_sections(gid, game, game_pages, today=today)
     if extra_sections:
         content = "".join(extra_sections) + content
     if bottom_sections:
@@ -573,6 +728,10 @@ def build_game_page(game: dict, docs_dir: str, today: datetime.date, gid: str,
         canonical_url=f"{SITE_BASE_URL}/{game_rel_path(gid)}",
         heading=f"{title}のSteamセール履歴", date_label=f"{japanese_date(today)} 更新",
         game_cards_html="", gadget_cards_html="", archive_html="", depth=4, about_html=content,
+        # 直す側だけ、ページとゲームの機械可読な情報（WebPage JSON-LD）を
+        # head に出す。比べる側は structured_data を渡さないので変わらない。
+        structured_data=(_game_webpage_json_ld(gid, game)
+                         if is_treatment_game(gid) else ""),
     )
 
 

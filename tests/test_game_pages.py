@@ -152,7 +152,8 @@ class GamePagesTest(unittest.TestCase):
         page = self.generated_html()
         self.assertIn('href="/2026/10/01/"', page)
         self.assertNotIn('href="/2026/09/01/"', page)
-        self.assertIn("1回目：2026年9月1日</li>", page)
+        # PR2で直す側の日付に <time datetime> が付いた（表示の文字は同じ）。
+        self.assertIn('1回目：<time datetime="2026-09-01">2026年9月1日</time></li>', page)
 
     def test_sitemap_preserves_categories_and_adds_all_games_with_last_listed(self):
         dates = [dt.date(2026, 10, 1)]
@@ -307,8 +308,10 @@ class GamePagesTest(unittest.TestCase):
             self.assertIn('aria-label="パンくずリスト"', sections[0])
             self.assertIn('href="/game/steam/"', sections[0])
             bottom = agg.game_page_bottom_sections(gid, game)
-            self.assertEqual(len(bottom), 1)
+            # PR2で「よくある質問」が傾向の下に足された（PR1時点では傾向だけ）。
+            self.assertEqual(len(bottom), 2)
             self.assertIn("セールの傾向", bottom[0])
+            self.assertIn("よくある質問", bottom[1])
         # タイトルが無ければ何も足さない。
         self.assertEqual(agg.game_page_extra_sections("32470", None), [])
         self.assertEqual(agg.game_page_extra_sections("32470", {}), [])
@@ -346,9 +349,12 @@ class GamePagesTest(unittest.TestCase):
     def test_pr1_breadcrumb_json_ld_matches_visible_breadcrumb(self):
         game = self.pages()["100"]
         page = agg.build_game_page(game, str(self.docs), self.today, "32470")
-        match = re.search(r'<script type="application/ld\+json">(.*?)</script>', page, re.DOTALL)
-        self.assertIsNotNone(match)
-        data = json.loads(match.group(1))
+        # PR2で head に WebPage の JSON-LD が足されたため、最初のブロックでは
+        # なく BreadcrumbList のブロックを選ぶ。
+        blocks = re.findall(r'<script type="application/ld\+json">(.*?)</script>',
+                            page, re.DOTALL)
+        data = next(json.loads(b) for b in blocks
+                    if json.loads(b).get("@type") == "BreadcrumbList")
         self.assertEqual(data["@type"], "BreadcrumbList")
         items = data["itemListElement"]
         self.assertEqual([(i["position"], i["name"]) for i in items],
@@ -399,13 +405,18 @@ class GamePagesTest(unittest.TestCase):
         # canonical URL（gidで決まる）と題名の日付以外、比べる側と直す側の
         # 違いは追加断片だけであること。先頭・表より下の断片をすべて除去して比べる。
         sections = (agg.game_page_extra_sections("32470", game)
-                    + agg.game_page_bottom_sections("32470", game))
+                    + agg.game_page_bottom_sections("32470", game, today=self.today))
         stripped = treatment
         for section in sections:
             stripped = stripped.replace(section, "", 1)
+        # PR2で head に足された WebPage の JSON-LD も、直す側だけの追加なので
+        # 比べるときは外す（build_page が前に付ける改行と空白も一緒に）。
+        stripped = stripped.replace("\n    " + agg._game_webpage_json_ld("32470", game), "", 1)
         # 目印のクラス（修正4）は直す側だけの変更なので、比べるときは外す。
         stripped = stripped.replace('class="game-history treatment-history"',
                                     'class="game-history"', 1)
+        # PR2の日付の <time datetime> も直す側だけの変更なので、比べるときは外す。
+        stripped = re.sub(r"</?time[^>]*>", "", stripped)
         self.assertEqual(
             control.replace("/game/steam/app/2246340/", "/game/steam/app/GID/").replace(
                 "（10月2日更新）", ""),
@@ -415,22 +426,22 @@ class GamePagesTest(unittest.TestCase):
     def test_pr1_related_links_only_within_treatment(self):
         pages = self.pages()
         game = pages["100"]
-        # game_pages を渡さなければ内部リンクは出ない（先頭パンくず＋表より下の傾向）。
+        # game_pages を渡さなければ内部リンクは出ない（先頭パンくず＋表より下の傾向・FAQ）。
         self.assertEqual(len(agg.game_page_extra_sections("100", game)), 1)
-        self.assertEqual(len(agg.game_page_bottom_sections("100", game)), 1)
-        # 直す側は先頭パンくず＋表より下の傾向・内部リンク。リンク先は直す側の「300」だけ。
+        self.assertEqual(len(agg.game_page_bottom_sections("100", game)), 2)
+        # 直す側は先頭パンくず＋表より下の傾向・FAQ・内部リンク。リンク先は直す側の「300」だけ。
         self.assertEqual(len(agg.game_page_extra_sections("100", game, pages)), 1)
         bottom = agg.game_page_bottom_sections("100", game, pages)
-        self.assertEqual(len(bottom), 2)
-        self.assertIn("/game/steam/app/300/", bottom[1])
-        self.assertNotIn("/game/steam/app/100/", bottom[1])  # 自分自身へは張らない
-        self.assertIn("セールの傾向が近いゲーム", bottom[1])
+        self.assertEqual(len(bottom), 3)
+        self.assertIn("/game/steam/app/300/", bottom[2])
+        self.assertNotIn("/game/steam/app/100/", bottom[2])  # 自分自身へは張らない
+        self.assertIn("セールの傾向が近いゲーム", bottom[2])
         # 比べる側は game_pages を渡しても空のまま。
         self.assertEqual(agg.game_page_extra_sections("2246340", game, pages), [])
         self.assertEqual(agg.game_page_bottom_sections("2246340", game, pages), [])
-        # 直す側「300」からは「100」へ張られる。
+        # 直す側「300」からは「100」へ張られる（傾向・FAQの次の断片が内部リンク）。
         self.assertIn("/game/steam/app/100/",
-                      agg.game_page_bottom_sections("300", pages["300"], pages)[1])
+                      agg.game_page_bottom_sections("300", pages["300"], pages)[2])
 
     def test_pr1_related_links_choose_closest_discount_and_count(self):
         def fake(title, discounts):
@@ -519,13 +530,17 @@ class GamePagesTest(unittest.TestCase):
                              f'{sale["listed_days"]}日', f'{sale["discount"]}%OFF',
                              sale["price"], gap))
         for row_html, want in zip(rows, expected):
+            # PR2で直す側の日付に <time datetime> が付いた。数字の比較では外す。
+            row_html = re.sub(r"</?time[^>]*>", "", row_html)
             cells = [re.sub(r"\s+", "", c)
                      for c in re.findall(r"<t[hd][^>]*>(.*?)</t[hd]>", row_html, re.DOTALL)]
             self.assertEqual(cells, list(want))
         # 比べる側の表は同じ数字だが、目印もスマホ用の指定も無い。
+        # （直す側の <time> を外してから比べる。）
         control_tbody = re.search(r"<tbody>(.*?)</tbody>", control, re.DOTALL).group(1)
         self.assertEqual(re.findall(r"<tr>(.*?)</tr>", control_tbody, re.DOTALL),
-                         re.findall(r"<tr>(.*?)</tr>", tbody, re.DOTALL))
+                         re.findall(r"<tr>(.*?)</tr>",
+                                    re.sub(r"</?time[^>]*>", "", tbody), re.DOTALL))
 
     def test_pr1_treatment_counts_prices_match_records(self):
         self.generate()
